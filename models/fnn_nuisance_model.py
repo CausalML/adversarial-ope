@@ -5,9 +5,10 @@ from models.abstract_nuisance_model import AbstractNuisanceModel
 from utils.neural_nets import FFNet
 
 class FFNuisanceModule(nn.Module):
-    def __init__(self, s_dim, num_a, config):
+    def __init__(self, s_dim, num_a, gamma, config):
         self.s_dim = s_dim
         self.num_a = num_a
+        self.scale = 1 / (1 - gamma)
         super().__init__()
         s_embed_size = config["s_embed_dim"]
         a_embed_size = config["a_embed_dim"]
@@ -58,7 +59,7 @@ class FFNuisanceModule(nn.Module):
         sa_features = self.sa_feature_net(sa_concat)
 
         if calc_q or calc_xi:
-            q = torch.sigmoid(self.q_net(sa_features) / 10.0)
+            q = self.scale * torch.sigmoid(self.q_net(sa_features) / 10.0) 
         else:
             q = None
 
@@ -69,15 +70,15 @@ class FFNuisanceModule(nn.Module):
             pi_ss_embed = self.a_embed_net(pi_ss)
             ss_pi_ss_concat = torch.cat([ss_embed, pi_ss_embed], dim=1)
             ss_pi_ss_features = self.sa_feature_net(ss_pi_ss_concat)
-            v = torch.sigmoid(self.q_net(ss_pi_ss_features) / 10.0)
+            v = self.scale * torch.sigmoid(self.q_net(ss_pi_ss_features) / 10.0)
         else:
             v = None
 
         if calc_xi:
-            beta = torch.sigmoid(self.beta_net(sa_features) / 10.0)
+            beta = self.scale * torch.sigmoid(self.beta_net(sa_features) / 10.0)
             # temp = self._soft_temp_clip(self.xi_temp)
             temp = 1.0
-            xi = torch.sigmoid(temp * (v - beta))
+            xi = torch.sigmoid(temp * (beta - v))
         else:
             xi = None
 
@@ -97,9 +98,10 @@ class FFNuisanceModule(nn.Module):
 
 
 class FeedForwardNuisanceModel(AbstractNuisanceModel):
-    def __init__(self, s_dim, num_a, config):
+    def __init__(self, s_dim, num_a, gamma, config):
         super().__init__(s_dim, num_a)
-        self.net = FFNuisanceModule(s_dim=s_dim, num_a=num_a, config=config)
+        self.net = FFNuisanceModule(s_dim=s_dim, num_a=num_a, config=config,
+                                    gamma=gamma)
 
     def get_q(self, s, a):
         q, _, _, _ = self.net(

@@ -33,7 +33,7 @@ class AbstractLearner(ABC):
 
     def estimate_policy_val_q(self, init_s, init_a):
         q = self.model.get_q(init_s.unsqueeze(0), init_a)
-        return float(q[0])
+        return (1 - self.gamma) * float(q[0])
 
 
     @abstractmethod

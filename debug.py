@@ -29,7 +29,7 @@ def main():
     #         print(v)
     #     print("")
 
-    adversarial_lambda = 3
+    adversarial_lambda = 4.0
     env_eval = ToyEnv(init_s=init_s, adversarial=True,
                       adversarial_lambda=adversarial_lambda)
 
@@ -46,7 +46,7 @@ def main():
     }
     s_dim = env.get_s_dim()
     num_a = env.get_num_a()
-    model = FeedForwardNuisanceModel(s_dim=s_dim, num_a=num_a,
+    model = FeedForwardNuisanceModel(s_dim=s_dim, num_a=num_a, gamma=gamma,
                                      config=model_config)
     critic_class = FeedForwardCritic
     critic_config = {

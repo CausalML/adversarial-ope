@@ -11,7 +11,7 @@ class MinMaxLearner(AbstractLearner):
         super().__init__(nuisance_model, gamma, adversarial_lambda)
 
     def train(self, dataset, pi_e_name, critic_class, critic_kwargs,
-              batch_size=128, num_epoch=1000, model_lr=1e-3, critic_lr=5e-3,
+              batch_size=128, num_epoch=200, model_lr=1e-4, critic_lr=5e-4,
               eval_freq=5):
         model = self.model
         critic = critic_class(num_out=2, **critic_kwargs)
