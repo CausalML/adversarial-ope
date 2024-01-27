@@ -5,3 +5,5 @@ See debug.py to see example of how everything can be run. Summary of contents:
 3. *models* contains nn.Module code for modelling the Q / beta / w functions (along with the critic functions for minimax methods)
 4. *learners* contains the learning algorihtms (currently have implemented minimax algorithm for estimating Q/beta)
 5. *utils* contains some useful generic utilities
+
+libraries needed: torch, numpy, gymnasium
