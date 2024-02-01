@@ -136,7 +136,8 @@ class AbstractLearner(ABC):
     def get_eta_batch_moments(self, critic, s, a, pi_s,
                               model_grad=False, critic_grad=False,
                               basis_expansion=False):
-        eta = self.model.get_eta(s, a) * pi_s.reshape(-1, 1)
+        pi_e_match = (pi_s == a).reshape(-1, 1) * 1.0
+        eta = self.model.get_eta(s, a) * pi_e_match
         if not model_grad:
             eta = eta.detach()
         if basis_expansion:
@@ -156,7 +157,8 @@ class AbstractLearner(ABC):
                             basis_expansion=False):
         w = self.model.get_w(s)
         w_ss = self.model.get_w(ss)
-        eta = self.model.get_eta(s, a) * pi_s.reshape(-1, 1)
+        pi_e_match = (pi_s == a).reshape(-1, 1) * 1.0
+        eta = self.model.get_eta(s, a) * pi_e_match
         xi = self.model.get_xi(s, a, ss, pi_ss)
         if not model_grad:
             w = w.detach()

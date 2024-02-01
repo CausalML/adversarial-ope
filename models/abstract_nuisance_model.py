@@ -84,8 +84,9 @@ class AbstractNuisanceModel(ABC):
         weighted_r_sum = 0
         batch_size_sum = 0
         for batch in dl:
-            pi_s = batch[f"pi_s::{pi_e_name}"].reshape(-1, 1)
-            eta = self.get_eta(s=batch["s"], a=batch["a"]) * pi_s
+            pi_s = batch[f"pi_s::{pi_e_name}"]
+            pi_e_match = (pi_s == batch["a"]).reshape(-1, 1) * 1.0
+            eta = self.get_eta(s=batch["s"], a=batch["a"]) * pi_e_match
             w = self.get_w(s=batch["s"]) 
             w_eta_sum += float((eta * w).sum()) / batch_scale
             r = batch["r"].unsqueeze(-1)
@@ -112,7 +113,6 @@ class AbstractNuisanceModel(ABC):
             s = batch["s"]
             a = batch["a"]
             ss = batch["ss"]
-            pi_s = batch[f"pi_s::{pi_e_name}"].reshape(-1, 1)
             pi_ss = batch[f"pi_ss::{pi_e_name}"]
             q, v, xi = self.get_q_v_xi(s, a, ss, pi_ss)
             r = batch["r"].unsqueeze(-1)
@@ -120,7 +120,9 @@ class AbstractNuisanceModel(ABC):
             pseudo_r = r + gamma * e_cvar_v - q
 
             # compute weights
-            eta = self.get_eta(s=batch["s"], a=batch["a"]) * pi_s
+            pi_s = batch[f"pi_s::{pi_e_name}"]
+            pi_e_match = (pi_s == batch["a"]).reshape(-1, 1) * 1.0
+            eta = self.get_eta(s=batch["s"], a=batch["a"]) * pi_e_match
             w = self.get_w(s=batch["s"])
             w_eta_sum += float((eta * w).sum()) / batch_scale
 

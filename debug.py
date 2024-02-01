@@ -102,7 +102,7 @@ def main():
         "config": critic_config
     }
 
-    ## train mdoel on Q / Xi moments
+    ## train mdoel on all moments
 
     learner = IterativeSieveLearner(
         nuisance_model=model, gamma=gamma,
@@ -134,26 +134,26 @@ def main():
     )
     model.save_model("tmp_model")
 
-    ## train model on Eta / W moments second
-    model.freeze_embeddings()
-    learner_2 = IterativeSieveLearner(
-        nuisance_model=model, gamma=gamma,
-        adversarial_lambda=adversarial_lambda,
-        train_q_xi=False, train_eta=True, train_w=True,
-    )
+    # ## train model on Eta / W moments second
+    # model.freeze_embeddings()
+    # learner_2 = IterativeSieveLearner(
+    #     nuisance_model=model, gamma=gamma,
+    #     adversarial_lambda=adversarial_lambda,
+    #     train_q_xi=False, train_eta=True, train_w=True,
+    # )
     
-    learner_2.train(
-        dataset, pi_e_name=pi_e_name, verbose=True, device=device,
-        init_basis_func=env.bias_basis_func, num_init_basis=1,
-        model_eval_freq=5, critic_eval_freq=5,
-        # init_basis_func=env.flexible_basis_func,
-        # num_init_basis=env.get_num_init_basis_func(),
-        # model_lr=1e-4,
-        # num_init_basis=env.get_num_init_basis_func(),
-        evaluate_pv_kwargs=evaluate_pv_kwargs, critic_class=critic_class,
-        s_init=s_init, critic_kwargs=critic_kwargs,
-    )
-    model.save_model("tmp_model_2")
+    # learner_2.train(
+    #     dataset, pi_e_name=pi_e_name, verbose=True, device=device,
+    #     init_basis_func=env.bias_basis_func, num_init_basis=1,
+    #     model_eval_freq=5, critic_eval_freq=5,
+    #     # init_basis_func=env.flexible_basis_func,
+    #     # num_init_basis=env.get_num_init_basis_func(),
+    #     # model_lr=1e-4,
+    #     # num_init_basis=env.get_num_init_basis_func(),
+    #     evaluate_pv_kwargs=evaluate_pv_kwargs, critic_class=critic_class,
+    #     s_init=s_init, critic_kwargs=critic_kwargs,
+    # )
+    # model.save_model("tmp_model_2")
 
     ## evaluate model using 3 policy value estimators
 
