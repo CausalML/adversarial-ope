@@ -90,11 +90,12 @@ class AbstractLearner(ABC):
         ss = batch["ss"]
         pi_ss = batch[f"pi_ss::{pi_e_name}"]
         r = batch["r"]
-        q, v, _, eta, w  = self.model.get_all(s, a, ss, pi_ss)
+        q, v, _, beta, eta, w  = self.model.get_all(s, a, ss, pi_ss)
         reg_sum = 0
         if self.train_q_xi:
             reg_sum += (q ** 2).mean()
             reg_sum += (v ** 2).mean()
+            reg_sum += (beta ** 2).mean()
         if self.train_eta:
             reg_sum += (eta ** 2).mean()
         if self.train_w:

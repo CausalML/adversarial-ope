@@ -161,26 +161,47 @@ def main():
         s_init=s_init, a_init=a_init, gamma=gamma
     )
     w_pv = model.estimate_policy_val_w(
-        dl=dl_test, pi_e_name=pi_e_name
+        dl=dl_test, pi_e_name=pi_e_name,
     )
     w_pv_norm = model.estimate_policy_val_w(
-        dl=dl_test, pi_e_name=pi_e_name, normalize=True
+        dl=dl_test, pi_e_name=pi_e_name, normalize=True,
     )
     dr_pv = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
         adversarial_lambda=adversarial_lambda, gamma=gamma
     )
+    dr_pv_dual = model.estimate_policy_val_dr(
+        s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
+        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True
+    )
+    dr_pv_dual_hard = model.estimate_policy_val_dr(
+        s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
+        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True,
+        hard_dual_threshold=True,
+    )
     dr_pv_norm = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
         adversarial_lambda=adversarial_lambda, gamma=gamma, normalize=True,
     )
-
+    dr_pv_dual_norm = model.estimate_policy_val_dr(
+        s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
+        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True
+    )
+    dr_pv_dual_hard_norm = model.estimate_policy_val_dr(
+        s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
+        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True,
+        hard_dual_threshold=True,
+    )
     print(f"EVALUATING FINAL BEST MODEL:")
     print(f"Q-estimated v(pi_e): {q_pv}")
     print(f"W-estimated v(pi_e): {w_pv}")
     print(f"W-estimated v(pi_e) (normalized): {w_pv_norm}")
     print(f"DS/DV-estimated v(pi_e): {dr_pv}")
+    print(f"DS/DV-estimated v(pi_e) (dual): {dr_pv_dual}")
+    print(f"DS/DV-estimated v(pi_e) (dual, hard threshold): {dr_pv_dual_hard}")
     print(f"DS/DV-estimated v(pi_e) (normalized): {dr_pv_norm}")
+    print(f"DS/DV-estimated v(pi_e) (normalized, dual): {dr_pv_dual_norm}")
+    print(f"DS/DV-estimated v(pi_e) (normalized, dual, hard threshold): {dr_pv_dual_hard_norm}")
     print("")
 
     env_eval = ToyEnv(s_init=s_threshold, adversarial=True,

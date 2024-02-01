@@ -4,6 +4,7 @@ import json
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 STATE_FILE_NAME = "state.pt"
@@ -22,6 +23,10 @@ class AbstractNuisanceModel(ABC):
 
     @abstractmethod
     def get_q_v_xi(self, s, a, ss, pi_ss):
+        pass
+
+    @abstractmethod
+    def get_q_v_xi_beta(self, s, a, ss, pi_ss):
         pass
 
     @abstractmethod
@@ -102,7 +107,8 @@ class AbstractNuisanceModel(ABC):
 
     def estimate_policy_val_dr(self, dl, s_init, a_init, pi_e_name,
                                adversarial_lambda, gamma, normalize=False,
-                               batch_scale=1000.0):
+                               dual_cvar=True, hard_dual_threshold=False,
+                               worst_case=True, batch_scale=1000.0):
         lmbda = adversarial_lambda
         inv_lmbda = lmbda ** -1
         w_eta_sum = 0.0
@@ -114,9 +120,19 @@ class AbstractNuisanceModel(ABC):
             a = batch["a"]
             ss = batch["ss"]
             pi_ss = batch[f"pi_ss::{pi_e_name}"]
-            q, v, xi = self.get_q_v_xi(s, a, ss, pi_ss)
+            q, v, xi, beta = self.get_q_v_xi_beta(s, a, ss, pi_ss)
             r = batch["r"].unsqueeze(-1)
-            e_cvar_v = (inv_lmbda + (1 - inv_lmbda) * (1 + lmbda) * xi) * v
+            if dual_cvar:
+                if hard_dual_threshold:
+                    if worst_case:
+                        cvar_v = beta + (1 + lmbda) * F.relu(beta - v)
+                    else:
+                        cvar_v = beta + (1 + lmbda) * F.relu(v - beta)
+                else:
+                    cvar_v = beta + (1 + lmbda) * xi
+            else:
+                cvar_v = (1 + lmbda) * xi * v
+            e_cvar_v = inv_lmbda * v + (1 - inv_lmbda) * cvar_v
             pseudo_r = r + gamma * e_cvar_v - q
 
             # compute weights

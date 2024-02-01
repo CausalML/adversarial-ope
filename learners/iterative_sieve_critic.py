@@ -208,12 +208,41 @@ class IterativeSieveLearner(AbstractLearner):
             gamma=self.gamma, adversarial_lambda=self.adversarial_lambda,
             normalize=True,
         )
+        dr_pv_dual = self.model.estimate_policy_val_dr(
+            s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
+            adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
+            dual_cvar=True
+        )
+        dr_pv_dual_hard = self.model.estimate_policy_val_dr(
+            s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
+            adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
+            dual_cvar=True, hard_dual_threshold=True,
+        )
+        dr_pv_norm = self.model.estimate_policy_val_dr(
+            s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
+            adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
+            normalize=True,
+        )
+        dr_pv_dual_norm = self.model.estimate_policy_val_dr(
+            s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
+            adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
+            dual_cvar=True
+        )
+        dr_pv_dual_hard_norm = self.model.estimate_policy_val_dr(
+            s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
+            adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
+            dual_cvar=True, hard_dual_threshold=True,
+        )
         print(f"Intermediate policy value results:")
-        print(f"Q Policy Value: {q_pv}")
-        print(f"W Policy Value: {w_pv}")
-        print(f"W Policy Value (normalized): {w_pv_norm}")
-        print(f"DR Policy Value: {dr_pv}")
-        print(f"DR Policy Value (normalized): {dr_pv_norm}")
+        print(f"Q-estimated v(pi_e): {q_pv}")
+        print(f"W-estimated v(pi_e): {w_pv}")
+        print(f"W-estimated v(pi_e) (normalized): {w_pv_norm}")
+        print(f"DS/DV-estimated v(pi_e): {dr_pv}")
+        print(f"DS/DV-estimated v(pi_e) (dual): {dr_pv_dual}")
+        print(f"DS/DV-estimated v(pi_e) (dual, hard threshold): {dr_pv_dual_hard}")
+        print(f"DS/DV-estimated v(pi_e) (normalized): {dr_pv_norm}")
+        print(f"DS/DV-estimated v(pi_e) (normalized, dual): {dr_pv_dual_norm}")
+        print(f"DS/DV-estimated v(pi_e) (normalized, dual, hard threshold): {dr_pv_dual_hard_norm}")
         print("")
 
     def update_model(self, critic, dl, dl_2, dl_val, pi_e_name, max_num_epoch,

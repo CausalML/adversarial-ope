@@ -113,6 +113,7 @@ class FFNuisanceModule(nn.Module):
             # temp = 1.0
             xi = torch.sigmoid(temp * (beta - v))
         else:
+            beta = None
             xi = None
 
         if calc_eta:
@@ -125,7 +126,7 @@ class FFNuisanceModule(nn.Module):
         else:
             w = None
 
-        return q, v, xi, eta, w
+        return q, v, xi, beta, eta, w
 
     def _soft_temp_clip(self, temp):
         abs_temp = temp.abs()
@@ -153,26 +154,33 @@ class FeedForwardNuisanceModel(AbstractNuisanceModel):
             self.device = device
 
     def get_q(self, s, a):
-        q, _, _, _, _ = self.net(s, a, calc_q=True)
+        q, _, _, _, _, _ = self.net(s, a, calc_q=True)
         return q
 
     def get_q_v_xi(self, s, a, ss, pi_ss):
-        q, v, xi, _, _ = self.net(
+        q, v, xi, _, _, _ = self.net(
             s, a, ss, pi_ss,
             calc_q=True, calc_v=True, calc_xi=True
         )
         return q, v, xi
 
+    def get_q_v_xi_beta(self, s, a, ss, pi_ss):
+        q, v, xi, beta, _, _ = self.net(
+            s, a, ss, pi_ss,
+            calc_q=True, calc_v=True, calc_xi=True
+        )
+        return q, v, xi, beta
+
     def get_xi(self, s, a, ss, pi_ss):
-        _, _, xi, _, _ = self.net(s, a, ss, pi_ss, calc_xi=True)
+        _, _, xi, _, _, _ = self.net(s, a, ss, pi_ss, calc_xi=True)
         return xi
 
     def get_eta(self, s, a):
-        _, _, _, eta, _ = self.net(s, a, calc_eta=True)
+        _, _, _, _, eta, _ = self.net(s, a, calc_eta=True)
         return eta
 
     def get_w(self, s):
-        _, _, _, _, w = self.net(s, calc_w=True)
+        _, _, _, _, _, w = self.net(s, calc_w=True)
         return w
 
     def get_all(self, s, a, ss, pi_ss):
