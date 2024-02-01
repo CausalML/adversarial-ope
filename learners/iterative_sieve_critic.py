@@ -193,9 +193,11 @@ class IterativeSieveLearner(AbstractLearner):
         q_pv = self.model.estimate_policy_val_q(
             s_init=s_init, a_init=a_init, gamma=self.gamma
         )
-        w_pv = self.model.estimate_policy_val_w(dl=dl_test)
+        w_pv = self.model.estimate_policy_val_w(
+            dl=dl_test, pi_e_name=pi_e_name,
+        )
         w_pv_norm = self.model.estimate_policy_val_w(
-            dl=dl_test, normalize=True,
+            dl=dl_test, pi_e_name=pi_e_name, normalize=True,
         )
         dr_pv = self.model.estimate_policy_val_dr(
             s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,

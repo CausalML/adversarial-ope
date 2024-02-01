@@ -78,12 +78,14 @@ class AbstractNuisanceModel(ABC):
         q = self.get_q(s_init.unsqueeze(0), a_init)
         return (1 - gamma) * float(q[0])
 
-    def estimate_policy_val_w(self, dl, normalize=False, batch_scale=1000.0):
+    def estimate_policy_val_w(self, dl, pi_e_name, normalize=False,
+                              batch_scale=1000.0):
         w_eta_sum = 0.0
         weighted_r_sum = 0
         batch_size_sum = 0
         for batch in dl:
-            eta = self.get_eta(s=batch["s"], a=batch["a"])
+            pi_s = batch[f"pi_s::{pi_e_name}"].reshape(-1, 1)
+            eta = self.get_eta(s=batch["s"], a=batch["a"]) * pi_s
             w = self.get_w(s=batch["s"]) 
             w_eta_sum += float((eta * w).sum()) / batch_scale
             r = batch["r"].unsqueeze(-1)
@@ -110,6 +112,7 @@ class AbstractNuisanceModel(ABC):
             s = batch["s"]
             a = batch["a"]
             ss = batch["ss"]
+            pi_s = batch[f"pi_s::{pi_e_name}"].reshape(-1, 1)
             pi_ss = batch[f"pi_ss::{pi_e_name}"]
             q, v, xi = self.get_q_v_xi(s, a, ss, pi_ss)
             r = batch["r"].unsqueeze(-1)
@@ -117,7 +120,7 @@ class AbstractNuisanceModel(ABC):
             pseudo_r = r + gamma * e_cvar_v - q
 
             # compute weights
-            eta = self.get_eta(s=batch["s"], a=batch["a"])
+            eta = self.get_eta(s=batch["s"], a=batch["a"]) * pi_s
             w = self.get_w(s=batch["s"])
             w_eta_sum += float((eta * w).sum()) / batch_scale
 

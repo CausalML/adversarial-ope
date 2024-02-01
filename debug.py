@@ -107,7 +107,7 @@ def main():
     learner = IterativeSieveLearner(
         nuisance_model=model, gamma=gamma,
         adversarial_lambda=adversarial_lambda,
-        train_q_xi=True, train_eta=False, train_w=False,
+        train_q_xi=True, train_eta=True, train_w=True,
     )
 
     s_init, a_init = env.get_s_a_init(pi_e)
@@ -124,6 +124,7 @@ def main():
     learner.train(
         dataset, pi_e_name=pi_e_name, verbose=True, device=device,
         init_basis_func=env.bias_basis_func, num_init_basis=1,
+        model_eval_freq=5, critic_eval_freq=5,
         # init_basis_func=env.flexible_basis_func,
         # num_init_basis=env.get_num_init_basis_func(),
         # model_lr=1e-4,
@@ -134,6 +135,7 @@ def main():
     model.save_model("tmp_model")
 
     ## train model on Eta / W moments second
+    model.freeze_embeddings()
     learner_2 = IterativeSieveLearner(
         nuisance_model=model, gamma=gamma,
         adversarial_lambda=adversarial_lambda,
@@ -143,6 +145,7 @@ def main():
     learner_2.train(
         dataset, pi_e_name=pi_e_name, verbose=True, device=device,
         init_basis_func=env.bias_basis_func, num_init_basis=1,
+        model_eval_freq=5, critic_eval_freq=5,
         # init_basis_func=env.flexible_basis_func,
         # num_init_basis=env.get_num_init_basis_func(),
         # model_lr=1e-4,
@@ -157,8 +160,12 @@ def main():
     q_pv = model.estimate_policy_val_q(
         s_init=s_init, a_init=a_init, gamma=gamma
     )
-    w_pv = model.estimate_policy_val_w(dl=dl_test)
-    w_pv_norm = model.estimate_policy_val_w(dl=dl_test, normalize=True)
+    w_pv = model.estimate_policy_val_w(
+        dl=dl_test, pi_e_name=pi_e_name
+    )
+    w_pv_norm = model.estimate_policy_val_w(
+        dl=dl_test, pi_e_name=pi_e_name, normalize=True
+    )
     dr_pv = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
         adversarial_lambda=adversarial_lambda, gamma=gamma
