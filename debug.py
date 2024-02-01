@@ -168,11 +168,12 @@ def main():
     )
     dr_pv = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
-        adversarial_lambda=adversarial_lambda, gamma=gamma
+        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=False,
     )
     dr_pv_dual = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
-        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True
+        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True,
+        hard_dual_threshold=False,
     )
     dr_pv_dual_hard = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
@@ -181,16 +182,18 @@ def main():
     )
     dr_pv_norm = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
-        adversarial_lambda=adversarial_lambda, gamma=gamma, normalize=True,
+        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=False,
+        normalize=True,
     )
     dr_pv_dual_norm = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
-        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True
+        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True,
+        hard_dual_threshold=False, normalize=True,
     )
     dr_pv_dual_hard_norm = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
         adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True,
-        hard_dual_threshold=True,
+        hard_dual_threshold=True, normalize=True,
     )
     print(f"EVALUATING FINAL BEST MODEL:")
     print(f"Q-estimated v(pi_e): {q_pv}")

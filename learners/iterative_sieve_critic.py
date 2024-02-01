@@ -201,17 +201,13 @@ class IterativeSieveLearner(AbstractLearner):
         )
         dr_pv = self.model.estimate_policy_val_dr(
             s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
-            gamma=self.gamma, adversarial_lambda=self.adversarial_lambda
-        )
-        dr_pv_norm = self.model.estimate_policy_val_dr(
-            s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
             gamma=self.gamma, adversarial_lambda=self.adversarial_lambda,
-            normalize=True,
+            dual_cvar=False,
         )
         dr_pv_dual = self.model.estimate_policy_val_dr(
             s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
             adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
-            dual_cvar=True
+            dual_cvar=True, hard_dual_threshold=False,
         )
         dr_pv_dual_hard = self.model.estimate_policy_val_dr(
             s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
@@ -221,17 +217,17 @@ class IterativeSieveLearner(AbstractLearner):
         dr_pv_norm = self.model.estimate_policy_val_dr(
             s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
             adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
-            normalize=True,
+            dual_cvar=False, normalize=True,
         )
         dr_pv_dual_norm = self.model.estimate_policy_val_dr(
             s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
             adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
-            dual_cvar=True
+            dual_cvar=True, hard_dual_threshold=False, normalize=True,
         )
         dr_pv_dual_hard_norm = self.model.estimate_policy_val_dr(
             s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
             adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
-            dual_cvar=True, hard_dual_threshold=True,
+            dual_cvar=True, hard_dual_threshold=True, normalize=True,
         )
         print(f"Intermediate policy value results:")
         print(f"Q-estimated v(pi_e): {q_pv}")
