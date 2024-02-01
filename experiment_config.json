@@ -2,7 +2,8 @@
 
 {
     "num_rep": 10,
-    "num_worker": 10,
+    "num_restart": 3,
+    "num_workers": 10,
     "adversarial_lambda_values": [1, 4, 9, 19],
     "devices": ["cpu"],
     "num_samples": 10000,

@@ -3,6 +3,7 @@ import json
 import os
 import pandas
 from tqdm import tqdm
+from itertools import product
 
 from environments.toy_env import ToyEnv
 from utils.policy_evaluation import evaluate_policy
@@ -17,16 +18,18 @@ from learners.iterative_sieve_critic import IterativeSieveLearner
 def main(config, results_path):
     num_rep = config["num_rep"]
     lambda_range = config["adversarial_lambda_values"]
+    num_restart = config["num_restart"]
     job_queue = Queue()
     num_jobs = 0
-    for rep_i in range(num_rep):
-        for lmbda in lambda_range:
-            for dual_cvar in (True, False):
-                for sequential in (True, False):
-                    job = {"rep_i": rep_i, "adversarial_lambda": lmbda,
-                           "dual_cvar": dual_cvar, "sequential": sequential}
-                    job_queue.put(job)
-                    num_jobs += 1
+    job_iter = product(range(num_rep), range(num_restart), lambda_range,
+                       (True, False), (True, False))
+
+    for rep_i, restart_i, lmbda, dual_cvar, sequential in job_iter:
+        job = {"rep_i": rep_i, "adversarial_lambda": lmbda,
+               "restart_i": restart_i, "dual_cvar": dual_cvar,
+               "sequential": sequential}
+        job_queue.put(job)
+        num_jobs += 1
 
     procs = []
     results_queue = Queue()
@@ -54,8 +57,8 @@ def run_jobs_loop(job_queue, results_queue, config, device):
         results = single_run(config=config, device=device, **job_kwargs)
         results_queue.put(results)
 
-def single_run(config, rep_i, adversarial_lambda, dual_cvar, sequential,
-               device=None):
+def single_run(config, rep_i, restart_i,
+               adversarial_lambda, dual_cvar, sequential, device=None):
 
 
     env = ToyEnv(s_init=config["s_threshold"], adversarial=False)
@@ -176,14 +179,14 @@ def single_run(config, rep_i, adversarial_lambda, dual_cvar, sequential,
         hard_dual_threshold=False, normalize=True,
     )
     pv_results = {
-        "q": q_pv, "w": w_pv_norm, "w_norm": w_pv_norm,
+        "q": q_pv, "w": w_pv, "w_norm": w_pv_norm,
         "dr": dr_pv_dual, "dr_primal": dr_pv,
         "dr_norm": dr_pv_dual_norm, "dr_primal_norm": dr_pv_norm,
     }
     results = []
     for key, val in pv_results.items():
         row = {
-            "rep_i": rep_i, "dual_cvar": dual_cvar,
+            "rep_i": rep_i, "restart_i": restart_i, "dual_cvar": dual_cvar,
             "sequential": sequential, "lambda": adversarial_lambda,
             "est_policy_value": val, "estimator": key,
         }
