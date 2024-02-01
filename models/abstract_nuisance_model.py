@@ -130,9 +130,9 @@ class AbstractNuisanceModel(ABC):
                         cvar_v = beta + (1 + lmbda) * F.relu(v - beta)
                 else:
                     if worst_case:
-                        cvar_v = beta - (1 + lmbda) * xi
+                        cvar_v = beta - (1 + lmbda) * xi * (beta - v)
                     else:
-                        cvar_v = beta + (1 + lmbda) * xi
+                        cvar_v = beta + (1 + lmbda) * xi * (v - beta)
             else:
                 cvar_v = (1 + lmbda) * xi * v
             e_cvar_v = inv_lmbda * v + (1 - inv_lmbda) * cvar_v
