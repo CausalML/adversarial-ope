@@ -7,7 +7,7 @@ from models.abstract_nuisance_model import AbstractNuisanceModel
 class AbstractLearner(ABC):
     def __init__(self, nuisance_model, gamma, adversarial_lambda,
                  train_q_xi=False, train_eta=True, train_w=False,
-                 worst_case=True):
+                 worst_case=True, use_dual_cvar=True):
         self.model = nuisance_model
         self.gamma = gamma
         self.adversarial_lambda = adversarial_lambda
@@ -15,6 +15,7 @@ class AbstractLearner(ABC):
         self.train_q_xi = train_q_xi
         self.train_eta = train_eta
         self.train_w = train_w
+        self.use_dual_cvar = use_dual_cvar
         assert isinstance(self.model, AbstractNuisanceModel)
         super().__init__()
 
@@ -104,7 +105,7 @@ class AbstractLearner(ABC):
 
     def get_q_xi_batch_moments(self, critic, s, a, ss, r, pi_ss,
                                model_grad=False, critic_grad=False,
-                               basis_expansion=False, use_dual_cvar=True):
+                               basis_expansion=False):
 
         q, v, xi, beta = self.model.get_q_v_xi_beta(s, a, ss, pi_ss)
         lmbda = self.adversarial_lambda
@@ -112,7 +113,7 @@ class AbstractLearner(ABC):
         alpha = 1 / (1 + lmbda)
         assert inv_lmbda > 0
         assert inv_lmbda <= 1
-        if use_dual_cvar:
+        if self.use_dual_cvar:
             if self.worst_case:
                 cvar_v = beta - (1 + lmbda) * xi * (beta - v)
             else:

@@ -101,11 +101,12 @@ class SieveCritic(AbstractCritic):
 class IterativeSieveLearner(AbstractLearner):
     def __init__(self, nuisance_model, gamma, adversarial_lambda,
                  train_q_xi=True, train_eta=True, train_w=True,
-                 worst_case=True):
+                 use_dual_cvar=True, worst_case=True):
         super().__init__(
             nuisance_model=nuisance_model, gamma=gamma,
             adversarial_lambda=adversarial_lambda, worst_case=worst_case,
             train_q_xi=train_q_xi, train_eta=train_eta, train_w=train_w,
+            use_dual_cvar=use_dual_cvar,
         )
 
     def train(self, dataset, pi_e_name, critic_class, critic_kwargs,
@@ -309,7 +310,7 @@ class IterativeSieveLearner(AbstractLearner):
 
                 model_optim.zero_grad()
                 (loss + loss_reg).backward()
-                if grad_clip is not None:
+                if grad_clip:
                     torch.nn.utils.clip_grad_norm_(
                         parameters=self.model.get_parameters(),
                         max_norm=grad_clip, norm_type="inf",
