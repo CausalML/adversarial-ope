@@ -68,15 +68,24 @@ class FFNuisanceModule(nn.Module):
         self.temp_clip_alpha = config.get("max_temp_clip_alpha", 1e-3)
         # self.temp_relu = nn.LeakyReLU(negative_slope=temp_clip_alpha)
 
+        self.frozen_embeddings = False
+
+    def freeze_embeddings(self):
+        self.frozen_embeddings = True
+
     def forward(self, s, a=None, ss=None, pi_ss=None, calc_q=False,
                 calc_v=False, calc_xi=False, calc_eta=False, calc_w=False):
 
         s_embed = self.s_embed_net(s)
+        if self.frozen_embeddings:
+            s_embed = s_embed.detach()
 
         if calc_q or calc_v or calc_xi or calc_eta:
             a_embed = self.a_embed_net(a)
             sa_concat = torch.cat([s_embed, a_embed], dim=1)
             sa_features = self.sa_feature_net(sa_concat)
+            if self.frozen_embeddings:
+                sa_features = sa_features.detach()
 
         if calc_q:
             # q = self.scale * torch.sigmoid(self.q_net(sa_features) / 10.0) 
@@ -192,3 +201,6 @@ class FeedForwardNuisanceModel(AbstractNuisanceModel):
 
     def eval(self):
         self.net.eval()
+
+    def freeze_embeddings(self):
+        self.net.freeze_embeddings()

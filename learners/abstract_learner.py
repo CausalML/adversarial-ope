@@ -163,6 +163,10 @@ class AbstractLearner(ABC):
             w_ss = w_ss.detach()
             eta = eta.detach()
             xi = xi.detach()
+        elif not self.train_q_xi:
+            xi = xi.detach()
+        elif not self.train_eta:
+            eta = eta.detach()
 
         if basis_expansion:
             f_s = critic.get_w_basis_expansion(s)

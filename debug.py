@@ -61,7 +61,7 @@ def main():
     #         break
 
 
-    ## train model on all moments
+    ## set up model
 
     s_dim = env.get_s_dim()
     num_a = env.get_num_a()
@@ -102,10 +102,12 @@ def main():
         "config": critic_config
     }
 
+    ## train mdoel on Q / Xi moments
+
     learner = IterativeSieveLearner(
         nuisance_model=model, gamma=gamma,
         adversarial_lambda=adversarial_lambda,
-        train_q_xi=True, train_eta=True, train_w=True,
+        train_q_xi=True, train_eta=False, train_w=False,
     )
 
     s_init, a_init = env.get_s_a_init(pi_e)
@@ -130,6 +132,25 @@ def main():
         s_init=s_init, critic_kwargs=critic_kwargs,
     )
     model.save_model("tmp_model")
+
+    ## train model on Eta / W moments second
+    learner_2 = IterativeSieveLearner(
+        nuisance_model=model, gamma=gamma,
+        adversarial_lambda=adversarial_lambda,
+        train_q_xi=False, train_eta=True, train_w=True,
+    )
+    
+    learner_2.train(
+        dataset, pi_e_name=pi_e_name, verbose=True, device=device,
+        init_basis_func=env.bias_basis_func, num_init_basis=1,
+        # init_basis_func=env.flexible_basis_func,
+        # num_init_basis=env.get_num_init_basis_func(),
+        # model_lr=1e-4,
+        # num_init_basis=env.get_num_init_basis_func(),
+        evaluate_pv_kwargs=evaluate_pv_kwargs, critic_class=critic_class,
+        s_init=s_init, critic_kwargs=critic_kwargs,
+    )
+    model.save_model("tmp_model_2")
 
     ## evaluate model using 3 policy value estimators
 
