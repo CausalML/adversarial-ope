@@ -125,11 +125,14 @@ class AbstractNuisanceModel(ABC):
             if dual_cvar:
                 if hard_dual_threshold:
                     if worst_case:
-                        cvar_v = beta + (1 + lmbda) * F.relu(beta - v)
+                        cvar_v = beta - (1 + lmbda) * F.relu(beta - v)
                     else:
                         cvar_v = beta + (1 + lmbda) * F.relu(v - beta)
                 else:
-                    cvar_v = beta + (1 + lmbda) * xi
+                    if worst_case:
+                        cvar_v = beta - (1 + lmbda) * xi
+                    else:
+                        cvar_v = beta + (1 + lmbda) * xi
             else:
                 cvar_v = (1 + lmbda) * xi * v
             e_cvar_v = inv_lmbda * v + (1 - inv_lmbda) * cvar_v

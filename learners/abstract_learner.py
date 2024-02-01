@@ -104,15 +104,22 @@ class AbstractLearner(ABC):
 
     def get_q_xi_batch_moments(self, critic, s, a, ss, r, pi_ss,
                                model_grad=False, critic_grad=False,
-                               basis_expansion=False):
+                               basis_expansion=False, use_dual_cvar=True):
 
-        q, v, xi = self.model.get_q_v_xi(s, a, ss, pi_ss)
+        q, v, xi, beta = self.model.get_q_v_xi_beta(s, a, ss, pi_ss)
         lmbda = self.adversarial_lambda
         inv_lmbda = lmbda ** -1
         alpha = 1 / (1 + lmbda)
         assert inv_lmbda > 0
         assert inv_lmbda <= 1
-        e_cvar_v = (inv_lmbda + (1 - inv_lmbda) * (1 + lmbda) * xi) * v
+        if use_dual_cvar:
+            if self.worst_case:
+                cvar_v = beta - (1 + lmbda) * xi
+            else:
+                cvar_v = beta + (1 + lmbda) * xi
+        else:
+            cvar_v = (1 + lmbda) * xi * v
+        e_cvar_v = inv_lmbda * v + (1 - inv_lmbda) * cvar_v
         rho_q = q  - r.unsqueeze(-1) - self.gamma * e_cvar_v
         rho_q = rho_q * (1 - self.gamma)
         if self.worst_case:
