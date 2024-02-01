@@ -124,3 +124,14 @@ class OfflineRLDataset(Dataset):
             dataset.pi_s[pi_name] = torch.load(pi_s_path)
             dataset.pi_ss[pi_name] = torch.load(pi_ss_path)
         return dataset
+
+    def to(self, device):
+        if device is None:
+            return
+        self.s = self.s.to(device)
+        self.a = self.a.to(device)
+        self.ss = self.ss.to(device)
+        self.r = self.r.to(device)
+        for pi_name in self.pi_s.keys():
+            self.pi_s[pi_name] = self.pi_s[pi_name].to(device)
+            self.pi_ss[pi_name] = self.pi_ss[pi_name].to(device)

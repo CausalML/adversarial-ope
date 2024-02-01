@@ -133,6 +133,8 @@ class IterativeSieveLearner(AbstractLearner):
             net_kwargs=critic_kwargs, init_basis_func=init_basis_func,
             num_init_basis=num_init_basis,
         )
+        if device is not None:
+            critic.to(device)
 
         # now do iterative updates with weighted objective
         for iter_i in range(1, total_num_iterations+1):
@@ -161,6 +163,8 @@ class IterativeSieveLearner(AbstractLearner):
                 net_kwargs=critic_kwargs, init_basis_func=init_basis_func,
                 num_init_basis=num_init_basis,
             )
+            if device is not None:
+                critic.to(device)
 
             # train next critic func
             self.train_next_critic(

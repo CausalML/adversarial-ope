@@ -124,13 +124,21 @@ class FFNuisanceModule(nn.Module):
 
 
 class FeedForwardNuisanceModel(AbstractNuisanceModel):
-    def __init__(self, s_dim, num_a, gamma, config):
+    def __init__(self, s_dim, num_a, gamma, config, device=None):
         super().__init__(s_dim, num_a)
         self.gamma = gamma
         self.config = config
         self.net = FFNuisanceModule(s_dim=s_dim, num_a=num_a, config=config,
                                     gamma=gamma)
+        self.device = device
+        if device is not None:
+            self.net.to(device)
         self.net.eval()
+
+    def to(self, device=None):
+        if device is not None:
+            self.net.to(device)
+            self.device = device
 
     def get_q(self, s, a):
         q, _, _, _, _ = self.net(s, a, calc_q=True)
