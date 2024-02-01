@@ -228,7 +228,7 @@ class IterativeSieveLearner(AbstractLearner):
             )
             num_param = self.get_num_moments() * critic.get_num_basis_func()
             omega_inv = omega_inv.reshape(num_param, num_param)
-            omega_np = np.linalg.inv(omega_inv.double().numpy())
+            omega_np = np.linalg.inv(omega_inv.cpu().double().numpy())
             omega_np = (omega_np + omega_np.T) / 2.0
 
             # double check that Omega is PD, if not then repeat calculation

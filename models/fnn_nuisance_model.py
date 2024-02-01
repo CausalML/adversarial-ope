@@ -7,7 +7,7 @@ from models.abstract_nuisance_model import AbstractNuisanceModel
 from utils.neural_nets import FFNet
 
 class FFNuisanceModule(nn.Module):
-    def __init__(self, s_dim, num_a, gamma, config):
+    def __init__(self, s_dim, num_a, gamma, config, device=None):
         super().__init__()
         self.s_dim = s_dim
         self.num_a = num_a
@@ -62,6 +62,9 @@ class FFNuisanceModule(nn.Module):
         self.max_temp = (torch.ones_like(self.xi_temp)
                          * config.get("max_temp", 10.0))
         self.zero = torch.zeros_like(self.xi_temp)
+        if device is not None:
+            self.max_temp = self.max_temp.to(device)
+            self.zero = self.zero.to(device)
         self.temp_clip_alpha = config.get("max_temp_clip_alpha", 1e-3)
         # self.temp_relu = nn.LeakyReLU(negative_slope=temp_clip_alpha)
 
@@ -129,7 +132,7 @@ class FeedForwardNuisanceModel(AbstractNuisanceModel):
         self.gamma = gamma
         self.config = config
         self.net = FFNuisanceModule(s_dim=s_dim, num_a=num_a, config=config,
-                                    gamma=gamma)
+                                    gamma=gamma, device=device)
         self.device = device
         if device is not None:
             self.net.to(device)
