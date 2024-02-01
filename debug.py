@@ -1,62 +1,91 @@
-import gymnasium as gym
-import numpy as np
-import torch
-
 from environments.toy_env import ToyEnv
 from utils.policy_evaluation import evaluate_policy
-from policies.generic_policies import UniformPolicy, EpsilonSmoothPolicy
+from policies.generic_policies import EpsilonSmoothPolicy
 from policies.toy_env_policies import ThresholdPolicy
 from utils.offline_dataset import OfflineRLDataset
 from models.fnn_nuisance_model import FeedForwardNuisanceModel
 from models.fnn_critic import FeedForwardCritic
-from learners.min_max_learner import MinMaxLearner
 from learners.iterative_sieve_critic import IterativeSieveLearner
 
 def main():
+
     s_threshold = 2.0
-    adversarial_lambda = 4.0
-    env = ToyEnv(s_init=s_threshold, adversarial=False)
     gamma = 0.9
-    pi_base = ThresholdPolicy(env, s_threshold=1.5)
-    pi_b = EpsilonSmoothPolicy(env, pi_base=pi_base, epsilon=0.1)
+    adversarial_lambda = 4.0
+    batch_size = 1024
+    num_sample = 10000
+
+    device = None
+
+    env = ToyEnv(s_init=s_threshold, adversarial=False)
     pi_e = ThresholdPolicy(env, s_threshold=s_threshold)
     pi_e_name = "pi_e"
 
+    dataset_path_train = "tmp_dataset/train_data"
+    dataset_path_test = "tmp_dataset/test_data"
+
+    ## build datasets and save them
+
+    pi_base = ThresholdPolicy(env, s_threshold=1.5)
+    pi_b = EpsilonSmoothPolicy(env, pi_base=pi_base, epsilon=0.1)
+
     dataset = OfflineRLDataset()
-    num_sample = 10000
     dataset.sample_new_trajectory(env=env, pi=pi_b, burn_in=1000,
-                                  num_sample=num_sample, thin=10)
+                                num_sample=num_sample, thin=10)
+
+    test_dataset = OfflineRLDataset()
+    test_dataset.sample_new_trajectory(env=env, pi=pi_b, burn_in=1000,
+                                    num_sample=num_sample, thin=10)
+
     dataset.apply_eval_policy(pi_e_name, pi_e)
-    # dl = dataset.get_batch_loader(batch_size=10)
-    # for batch in dl:
+    test_dataset.apply_eval_policy(pi_e_name, pi_e)
+
+    dataset.save_dataset(dataset_path_train)
+    test_dataset.save_dataset(dataset_path_test)
+
+    dataset.to(device)
+    test_dataset.to(device)
+
+
+    # ## double check that dataset is loadable and looks correct
+
+    # dataset_tmp = OfflineRLDataset.load_dataset(dataset_path_train)
+    # dataset_tmp.to(device)
+    # dl = dataset_tmp.get_batch_loader(batch_size=10)
+    # for i, batch in enumerate(dl):
     #     for k, v in batch.items():
     #         print(k, v.shape)
     #         print(v)
     #     print("")
+    #     if i > 10:
+    #         break
 
+
+    ## train model on all moments
+
+    s_dim = env.get_s_dim()
+    num_a = env.get_num_a()
 
     model_do = 0.05
     model_config = {
-        "s_embed_dim": 16,
-        "s_embed_layers": [16],
+        "s_embed_dim": 32,
+        "s_embed_layers": [32],
         "s_embed_do": model_do,
-        "a_embed_dim": 16,
-        "sa_feature_dim": 32,
-        "sa_feature_layers": [32],
+        "a_embed_dim": 32,
+        "sa_feature_dim": 64,
+        "sa_feature_layers": [64],
         "sa_feature_do": model_do,
-        "q_layers": [32, 16],
+        "q_layers": [64, 64],
         "q_do": model_do,
-        "beta_layers": [32, 16],
+        "beta_layers": [64, 64],
         "beta_do": model_do,
-        "w_layers": [32, 16],
+        "w_layers": [64, 64],
         "w_do": model_do,
-        "eta_layers": [32, 16],
+        "eta_layers": [64, 64],
         "eta_do": model_do,
     }
-    s_dim = env.get_s_dim()
-    num_a = env.get_num_a()
     model = FeedForwardNuisanceModel(s_dim=s_dim, num_a=num_a, gamma=gamma,
-                                     config=model_config)
+                                     config=model_config, device=device)
     critic_class = FeedForwardCritic
     critic_do = 0.05
     critic_config = {
@@ -72,55 +101,63 @@ def main():
         "num_a": num_a,
         "config": critic_config
     }
-    # learner = MinMaxLearner(
-    #     nuisance_model=model,
-    #     gamma=gamma, 
-    #     adversarial_lambda=adversarial_lambda
-    # )
-    learner_1 = IterativeSieveLearner(
-        nuisance_model=model,
-        gamma=gamma,
+
+    learner = IterativeSieveLearner(
+        nuisance_model=model, gamma=gamma,
         adversarial_lambda=adversarial_lambda,
-        train_q_xi=False, train_eta=True, train_w=True,
+        train_q_xi=True, train_eta=True, train_w=True,
     )
-    test_dataset = OfflineRLDataset()
-    test_dataset.sample_new_trajectory(env=env, pi=pi_b, burn_in=1000,
-                                       num_sample=num_sample, thin=10)
-    test_dataset.apply_eval_policy(pi_e_name, pi_e)
-    dl_test = test_dataset.get_batch_loader(batch_size=1024)
+
     s_init, a_init = env.get_s_a_init(pi_e)
+    if device is not None:
+        s_init = s_init.to(device)
+        a_init = a_init.to(device)
+
+    dl_test = test_dataset.get_batch_loader(batch_size=batch_size)
     evaluate_pv_kwargs = {
         "s_init": s_init, "a_init": a_init,
         "dl_test": dl_test, "pi_e_name": pi_e_name,
     }
-    learner_1.train(
-        dataset, init_basis_func=env.init_basis_func,
-        num_init_basis=env.get_num_init_basis_func(),
-        pi_e_name=pi_e_name, verbose=True,
+
+    learner.train(
+        dataset, pi_e_name=pi_e_name, verbose=True, device=device,
+        init_basis_func=env.bias_basis_func, num_init_basis=1,
+        # init_basis_func=env.flexible_basis_func,
+        # num_init_basis=env.get_num_init_basis_func(),
+        # model_lr=1e-4,
+        # num_init_basis=env.get_num_init_basis_func(),
         evaluate_pv_kwargs=evaluate_pv_kwargs, critic_class=critic_class,
         s_init=s_init, critic_kwargs=critic_kwargs,
     )
     model.save_model("tmp_model")
 
-    model = FeedForwardNuisanceModel.load_model("tmp_model")
+    ## evaluate model using 3 policy value estimators
 
     q_pv = model.estimate_policy_val_q(
         s_init=s_init, a_init=a_init, gamma=gamma
     )
     w_pv = model.estimate_policy_val_w(dl=dl_test)
+    w_pv_norm = model.estimate_policy_val_w(dl=dl_test, normalize=True)
     dr_pv = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
         adversarial_lambda=adversarial_lambda, gamma=gamma
     )
+    dr_pv_norm = model.estimate_policy_val_dr(
+        s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
+        adversarial_lambda=adversarial_lambda, gamma=gamma, normalize=True,
+    )
+
     print(f"EVALUATING FINAL BEST MODEL:")
     print(f"Q-estimated v(pi_e): {q_pv}")
     print(f"W-estimated v(pi_e): {w_pv}")
+    print(f"W-estimated v(pi_e) (normalized): {w_pv_norm}")
     print(f"DS/DV-estimated v(pi_e): {dr_pv}")
+    print(f"DS/DV-estimated v(pi_e) (normalized): {dr_pv_norm}")
     print("")
 
     env_eval = ToyEnv(s_init=s_threshold, adversarial=True,
-                      adversarial_lambda=adversarial_lambda)
-    pi_e_val = evaluate_policy(env_eval, pi_e, gamma, min_prec=1e-3)
+                        adversarial_lambda=adversarial_lambda)
+    pi_e_val = evaluate_policy(env_eval, pi_e, gamma, min_prec=1e-4)
     print(f"true v(pi_e): {pi_e_val}")
     print("")
 
