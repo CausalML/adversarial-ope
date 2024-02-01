@@ -1,11 +1,9 @@
-
-
-
 import gymnasium as gym
 from gymnasium import error, spaces, utils
 from gymnasium.utils import seeding
 from gymnasium.envs.registration import register
 import torch
+import torch.nn.functional as F
 import numpy as np
 
 register(
@@ -14,11 +12,11 @@ register(
 )
 
 class ToyEnv(gym.Env):
-    def __init__(self, init_s=1.0, adversarial=True, adversarial_lambda=2.0):
+    def __init__(self, s_init=1.0, adversarial=True, adversarial_lambda=2.0):
         super(ToyEnv, self).__init__()
         self.s = None
 
-        self.init_s = init_s
+        self.s_init = s_init
         self.s_max_val = 5.0
         self.adversarial = adversarial
         self.adversarial_lambda = adversarial_lambda
@@ -28,11 +26,15 @@ class ToyEnv(gym.Env):
         self.drift_min = -0.2
         self.drift_max = 1.0
 
+        self.num_init_basis_func = 20
+
         self.control_drift_min = -0.1
         self.control_drift_max = 0.5
 
-        self.max_risk = self.s_max_val ** 2
+        # self.max_risk = self.s_max_val ** 2
         # self.max_risk = self.s_max_val
+        self.control_cost = 1.0
+        self.max_risk = (self.s_max_val ** 2) + self.control_cost
 
         self.observation_space = spaces.Box(low=0, high=self.s_max_val)
         self.action_space = spaces.Discrete(2)
@@ -45,7 +47,7 @@ class ToyEnv(gym.Env):
         }
 
     def reset(self, seed=None, options=None):
-        self.s = self.init_s
+        self.s = self.s_init
         return np.array([self.s], dtype="float32"), {}
 
     def step(self, action):
@@ -60,8 +62,10 @@ class ToyEnv(gym.Env):
             else:
                 s_updated = self._transition_adversarial(action)
 
-        risk = (self.s ** 2 + s_updated ** 2 + self.s * s_updated) / 3.0
+        # risk = (self.s ** 2 + s_updated ** 2 + self.s * s_updated) / 3.0
         # risk = (self.s + s_updated) / 2.0
+        is_control = (action == self.CONTROL_ACTION)
+        risk = self.s ** 2 + self.control_cost * is_control
         reward = (self.max_risk - risk) / self.max_risk
         self.s = s_updated
         return np.array([s_updated], dtype="float32"), reward, False, False, {}
@@ -100,12 +104,33 @@ class ToyEnv(gym.Env):
     def get_num_a(self):
         return 2
 
-    def get_init_s_a(self, pi_e, device=None):
-        init_s = np.array([self.init_s], dtype="float32")
-        init_a = pi_e(init_s)
-        init_s_torch = torch.from_numpy(init_s)
-        init_a_torch = torch.LongTensor([init_a])
+    def get_s_a_init(self, pi_e, device=None):
+        s_init = np.array([self.s_init], dtype="float32")
+        a_init = pi_e(s_init)
+        s_init_torch = torch.from_numpy(s_init)
+        a_init_torch = torch.LongTensor([a_init])
         if device is None:
-            return init_s_torch, init_a_torch
+            return s_init_torch, a_init_torch
         else:
-            return init_s_torch.to(device), init_a_torch.to(device)
+            return s_init_torch.to(device), a_init_torch.to(device)
+
+    def flexible_basis_func(self, s, a=None):
+        if a is None:
+            a = torch.zeros(len(s)).long().to(s.device)
+        s_max = self.s_max_val
+        step = 1.0 * s_max / self.num_init_basis_func
+        min_thresholds = torch.arange(
+            start=0, end=s_max, step=step
+        ).to(s.device).unsqueeze(0)
+        max_thresholds = min_thresholds + step
+        f_1 = (s >= min_thresholds) * (s <= max_thresholds) * 1.0
+        f_2 = F.one_hot(a, num_classes=2)
+        bias = torch.ones_like(s)
+        f = (f_1.unsqueeze(1) * f_2.unsqueeze(2)).reshape(len(s), -1)
+        return torch.cat([bias, f], dim=1)
+
+    def get_num_init_basis_func(self):
+        return 2 * self.num_init_basis_func + 1
+
+    def bias_basis_func(self, s, a=None):
+        return torch.ones_like(s)

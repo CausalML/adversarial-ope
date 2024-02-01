@@ -11,11 +11,10 @@ class MinMaxLearner(AbstractLearner):
         super().__init__(nuisance_model, gamma, adversarial_lambda)
 
     def train(self, dataset, pi_e_name, critic_class, critic_kwargs,
-              batch_size=128, num_epoch=200, model_lr=1e-4, critic_lr=5e-4,
+              batch_size=1024, num_epoch=100, model_lr=1e-4, critic_lr=5e-4,
               eval_freq=5):
-        model = self.model
         critic = critic_class(num_out=2, **critic_kwargs)
-        model_optim = OAdam(model.get_parameters(), lr=model_lr)
+        model_optim = OAdam(self.model.get_parameters(), lr=model_lr)
         critic_optim = OAdam(critic.parameters(), lr=critic_lr)
 
         dl = dataset.get_batch_loader(batch_size=batch_size)

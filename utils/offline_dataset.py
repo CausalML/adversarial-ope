@@ -1,10 +1,22 @@
+import os
+import json
+
 import torch
 from torch.utils.data import Dataset, DataLoader
 from policies.abstract_policy import AbstractPolicy
 
 class OfflineRLDataset(Dataset):
-    def __init__(self, env, pi, burn_in, num_sample, thin=1):
+    def __init__(self):
         super().__init__()
+
+        self.s = torch.FloatTensor([])
+        self.a = torch.LongTensor([])
+        self.ss = torch.FloatTensor([])
+        self.r = torch.FloatTensor([])
+        self.pi_s = {}
+        self.pi_ss = {}
+
+    def sample_new_trajectory(self, env, pi, burn_in, num_sample, thin=1):
         assert isinstance(pi, AbstractPolicy)
 
         # first, run some burn-in iterations
@@ -29,19 +41,21 @@ class OfflineRLDataset(Dataset):
             s = ss
 
         # finally, convert sampled data into tensors
-        self.s = torch.stack(s_list)
-        self.a = torch.LongTensor(a_list)
-        self.ss = torch.stack(ss_list)
-        self.r = torch.FloatTensor(r_list)
-        self.ss_list = ss_list
-        self.pi_ss = {}
+        self.s = torch.cat([self.s, torch.stack(s_list)])
+        self.a = torch.cat([self.a, torch.LongTensor(a_list)])
+        self.ss = torch.cat([self.ss, torch.stack(ss_list)])
+        self.r = torch.cat([self.r, torch.FloatTensor(r_list)])
 
     def get_batch_loader(self, batch_size):
         return DataLoader(self, batch_size=batch_size)
 
     def apply_eval_policy(self, pi_eval_name, pi_eval):
         assert pi_eval_name not in self.pi_ss
-        pi_ss_list = [pi_eval(ss_) for ss_ in self.ss_list]
+
+        pi_s_list = [pi_eval(s_.numpy()) for s_ in self.s]
+        self.pi_s[pi_eval_name] = torch.LongTensor(pi_s_list)
+
+        pi_ss_list = [pi_eval(ss_.numpy()) for ss_ in self.ss]
         self.pi_ss[pi_eval_name] = torch.LongTensor(pi_ss_list)
 
     def __len__(self):
@@ -55,5 +69,58 @@ class OfflineRLDataset(Dataset):
             "r": self.r[i],
         }
         for pi_eval_name, pi_ss in self.pi_ss.items():
-            x[pi_eval_name] = pi_ss[i]
+            x[f"pi_ss::{pi_eval_name}"] = pi_ss[i]
+            pi_s = self.pi_s[pi_eval_name]
+            x[f"pi_s::{pi_eval_name}"] = pi_s[i]
         return x
+
+    def get_train_dev_split(self, dev_frac):
+        num_dev = int(len(self.s) * dev_frac)
+        num_train = len(self.s) - num_dev
+        train_split = self.get_split_dataset(0, num_train)
+        dev_split = self.get_split_dataset(num_train, num_train+num_dev)
+        return train_split, dev_split
+
+    def get_split_dataset(self, start_i, end_i):
+        split = OfflineRLDataset()
+        split.s = self.s[start_i:end_i]
+        split.a = self.a[start_i:end_i]
+        split.ss = self.ss[start_i:end_i]
+        split.r = self.r[start_i:end_i]
+        for pi_name, pi_ss in self.pi_ss.items():
+            split.pi_ss[pi_name] = pi_ss[start_i:end_i]
+            pi_s = self.pi_s[pi_name]
+            split.pi_s[pi_name] = pi_s[start_i:end_i]
+            split.pi_ss[pi_name] = pi_ss[start_i:end_i]
+        return split
+
+    def save_dataset(self, save_dir):
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        torch.save(self.s, os.path.join(save_dir, "s.pt"))
+        torch.save(self.a, os.path.join(save_dir, "a.pt"))
+        torch.save(self.ss, os.path.join(save_dir, "ss.pt"))
+        torch.save(self.r, os.path.join(save_dir, "r.pt"))
+        pi_e_name_list = list(self.pi_s)
+        with open(os.path.join(save_dir, "pi_names.json"), "w") as f:
+            json.dump(pi_e_name_list, f)
+        for pi_name, pi_ss in self.pi_ss.items():
+            pi_s = self.pi_s[pi_name]
+            torch.save(pi_s, os.path.join(save_dir, f"{pi_name}__pi_s.pt"))
+            torch.save(pi_ss, os.path.join(save_dir, f"{pi_name}__pi_ss.pt"))
+
+    @staticmethod
+    def load_dataset(load_dir):
+        dataset = OfflineRLDataset()
+        dataset.s = torch.load(os.path.join(load_dir, "s.pt"))
+        dataset.a = torch.load(os.path.join(load_dir, "a.pt"))
+        dataset.ss = torch.load(os.path.join(load_dir, "ss.pt"))
+        dataset.r = torch.load(os.path.join(load_dir, "r.pt"))
+        with open(os.path.join(load_dir, "pi_names.json")) as f:
+            pi_name_list = json.load(f)
+        for pi_name in pi_name_list:
+            pi_s_path = os.path.join(load_dir, f"{pi_name}__pi_s.pt")
+            pi_ss_path = os.path.join(load_dir, f"{pi_name}__pi_ss.pt")
+            dataset.pi_s[pi_name] = torch.load(pi_s_path)
+            dataset.pi_ss[pi_name] = torch.load(pi_ss_path)
+        return dataset

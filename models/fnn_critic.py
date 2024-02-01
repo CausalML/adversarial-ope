@@ -6,28 +6,85 @@ from utils.neural_nets import FFNet
 
 
 class FeedForwardCritic(AbstractCritic):
-    def __init__(self, num_out, s_dim, num_a, config):
-        super().__init__(num_out, s_dim, num_a)
+    def __init__(self, s_dim, num_a, config):
+        super().__init__(s_dim=s_dim, num_a=num_a)
         s_embed_size = config["s_embed_dim"]
         a_embed_size = config["a_embed_dim"]
+        sa_embed_size = s_embed_size + a_embed_size
+
         self.s_embed_net = FFNet(
             input_dim=s_dim,
             output_dim=s_embed_size,
             layer_sizes=config["s_embed_layers"],
+            dropout_rate=config.get("s_embed_do", 0.05)
         )
         self.a_embed_net = nn.Embedding(
             num_embeddings=num_a,
             embedding_dim=a_embed_size,
         )
-        sa_embed_size = s_embed_size + a_embed_size
-        self.critic_net = FFNet(
+        self.q_critic = FFNet(
             input_dim=sa_embed_size,
-            output_dim=self.num_out,
+            output_dim=1,
             layer_sizes=config["critic_layers"],
+            dropout_rate=config.get("critic_do", 0.05)
         )
+        self.xi_critic = FFNet(
+            input_dim=sa_embed_size,
+            output_dim=1,
+            layer_sizes=config["critic_layers"],
+            dropout_rate=config.get("critic_do", 0.05)
+        )
+        self.eta_critic = FFNet(
+            input_dim=sa_embed_size,
+            output_dim=1,
+            layer_sizes=config["critic_layers"],
+            dropout_rate=config.get("critic_do", 0.05)
+        )
+        self.w_critic = FFNet(
+            input_dim=s_embed_size,
+            output_dim=1,
+            layer_sizes=config["critic_layers"],
+            dropout_rate=config.get("critic_do", 0.05)
+        )
+        self.eval()
 
-    def forward(self, s, a):
+    def forward(self, s, a, calc_q=False, calc_xi=False, calc_eta=False,
+                calc_w=False):
         s_embed = self.s_embed_net(s)
-        a_embed = self.a_embed_net(a)
-        sa_concat = torch.cat([s_embed, a_embed], dim=1)
-        return self.critic_net(sa_concat)
+        if calc_q or calc_xi or calc_eta:
+            a_embed = self.a_embed_net(a)
+            sa_concat = torch.cat([s_embed, a_embed], dim=1)
+
+        if calc_q:
+            f_q = self.q_critic(sa_concat)
+        else:
+            f_q = None
+
+        if calc_xi:
+            f_xi = self.xi_critic(sa_concat)
+        else:
+            f_xi = None
+
+        if calc_eta:
+            f_eta = self.eta_critic(sa_concat)
+        else:
+            f_eta = None
+
+        if calc_w:
+            f_w = self.w_critic(s_embed)
+        else:
+            f_w = None
+
+        return f_q, f_xi, f_eta, f_w
+
+    def get_q_xi(self, s, a):
+        q, xi, _, _ = self(s, a, calc_q=True, calc_xi=True)
+        return q, xi
+
+    def get_eta(self, s, a):
+        _, _, eta, _ = self(s, a, calc_eta=True)
+        return eta
+
+    def get_w(self, s):
+        _, _, _, w = self(s, a=None, calc_w=True)
+        return w

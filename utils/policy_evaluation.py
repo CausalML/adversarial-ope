@@ -17,7 +17,7 @@ def evaluate_policy(env, policy, gamma, min_prec=1e-3, max_num_rollout=1e9):
             else:
                 s = s_next
         r_std = np.std(r_list)
-        print(len(r_list), np.mean(r_list), r_std)
+        # print(len(r_list), np.mean(r_list), r_std)
         if r_std / (len(r_list) ** 0.5) <= min_prec or len(r_list) > max_num_rollout:
             break
         else:
