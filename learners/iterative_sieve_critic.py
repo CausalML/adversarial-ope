@@ -261,12 +261,12 @@ class IterativeSieveLearner(AbstractLearner):
         while True:
             omega_inv = self.get_omega_inv(
                 critic, dl, s_init=s_init, pi_e_name=pi_e_name,
-                gamma_0=gamma_0, gamma_tik=gamma_tik, device=device
+                gamma_tik=gamma_tik, device=device
             )
             num_param = self.get_num_moments() * critic.get_num_basis_func()
-            omega_inv = omega_inv.reshape(num_param, num_param).cpu().double().numpy()
-            omega_inv = omega_inv + gamma_0 * np.eye(num_param)
-            omega_np = np.linalg.inv(omega_inv)
+            omega_inv_np = omega_inv.reshape(num_param, num_param).cpu().double().numpy()
+            omega_inv_np = omega_inv_np + gamma_0 * np.eye(num_param)
+            omega_np = np.linalg.inv(omega_inv_np)
             omega_np = (omega_np + omega_np.T) / 2.0
 
             # double check that Omega is PD, if not then repeat calculation
@@ -406,8 +406,7 @@ class IterativeSieveLearner(AbstractLearner):
         self.model.train()
         return loss, torch.cat(moment_losses)
 
-    def get_omega_inv(self, critic, dl, pi_e_name,
-                      s_init, gamma_0, gamma_tik,
+    def get_omega_inv(self, critic, dl, pi_e_name, s_init, gamma_tik,
                       batch_scale=1000.0, device=None):
         self.model.eval()
         f_mat = 0
