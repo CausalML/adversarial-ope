@@ -318,9 +318,12 @@ class IterativeSieveLearner(AbstractLearner):
                 # print(rho_f_2)
                 # loss = 0.5 * torch.einsum("xy,x,y->", omega, rho_f_1, rho_f_2)
                 loss = 0.5 * torch.einsum("xy,x,y->", omega, rho_f_1, rho_f_2)
-                loss_reg = reg_alpha * self.get_batch_l2_reg_model(
-                    batch=batch, pi_e_name=pi_e_name
-                )
+                if reg_alpha:
+                    loss_reg = reg_alpha * self.get_batch_l2_reg_model(
+                        batch=batch, pi_e_name=pi_e_name
+                    )
+                else:
+                    loss_reg = 0
                 # print(loss)
 
                 model_optim.zero_grad()
@@ -448,12 +451,13 @@ class IterativeSieveLearner(AbstractLearner):
                     pi_e_name=pi_e_name, critic_grad=True,
                 )
                 obj = moments.mean() - 0.5 * (moments ** 2).mean()
-                reg = critic_reg_alpha * self.get_batch_l2_reg_critic(
-                    batch=batch, critic=critic,
-                )
                 if critic_reg_alpha:
-                    f_q, f_xi, f_eta, f_w = critic.get_all()
-                loss = (-1.0 * obj)
+                    reg = critic_reg_alpha * self.get_batch_l2_reg_critic(
+                        batch=batch, critic=critic,
+                    )
+                else:
+                    reg = 0
+                loss = (-1.0 * obj + reg)
 
                 critic_optim.zero_grad()
                 loss.backward()
