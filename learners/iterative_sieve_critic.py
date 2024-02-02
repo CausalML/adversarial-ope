@@ -48,8 +48,8 @@ class SieveCritic(AbstractCritic):
 
     def get_all(self, s, a):
         q, xi = self.get_q_xi(s, a)
-        eta = self.get_eta(eta)
-        w = self.get_w(w)
+        eta = self.get_eta(s, a)
+        w = self.get_w(s)
         return q, xi, eta, w
 
     def get_q_xi_basis_expansion(self, s, a):
