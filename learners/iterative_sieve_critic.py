@@ -1,4 +1,5 @@
 from copy import deepcopy
+import sys
 
 import torch
 from torch.optim import Adam
@@ -121,8 +122,8 @@ class IterativeSieveLearner(AbstractLearner):
               gamma_0=1e-4, total_num_iterations=20, val_frac=0.1, 
               model_max_epoch=100, model_min_epoch=2, model_grad_clip=None,
               model_eval_freq=2, model_max_no_improve=3, model_lr=1e-3,
-              model_reg_alpha=0, model_reg_alpha_final=0,
-              critic_reg_alpha=0, model_max_epoch_final=500,
+              model_reg_alpha=1e-3, model_reg_alpha_final=1e-3,
+              critic_reg_alpha=1e-3, model_max_epoch_final=500,
               model_min_epoch_final=50,
               model_eval_freq_final=2, model_max_no_improve_final=5,
               model_lr_final=1e-4, model_grad_clip_final=None,
@@ -256,6 +257,7 @@ class IterativeSieveLearner(AbstractLearner):
 
         self.model.train()
         # first compute omega "weighting" matrix for loss function
+        num_fail = 0
         while True:
             omega_inv = self.get_omega_inv(
                 critic, dl, s_init=s_init, pi_e_name=pi_e_name,
@@ -271,9 +273,14 @@ class IterativeSieveLearner(AbstractLearner):
             # with extra regularization
             min_eig = np.linalg.eigvals(omega_np).real.min()
             if min_eig < eig_threshold:
-                print(f"WARNING: BAD OMEGA (eig: {min_eig})")
                 gamma_0 = gamma_0 * 10.0
-                print(f"REPEATING WITH gamma_0={gamma_0}")
+                if verbose:
+                    print(f"WARNING: BAD OMEGA (eig: {min_eig})")
+                    print(f"REPEATING WITH gamma_0={gamma_0}")
+                num_fail += 1
+                if num_fail >= 10:
+                    print("STUCK IN LOOP, ABORTING")
+                    sys.exit(1)
             else:
                 break
         omega = torch.FloatTensor(omega_np).to(omega_inv.device)
