@@ -255,8 +255,9 @@ class IterativeSieveLearner(AbstractLearner):
                 gamma_0=gamma_0, gamma_tik=gamma_tik, device=device
             )
             num_param = self.get_num_moments() * critic.get_num_basis_func()
-            omega_inv = omega_inv.reshape(num_param, num_param)
-            omega_np = np.linalg.inv(omega_inv.cpu().double().numpy())
+            omega_inv = omega_inv.reshape(num_param, num_param).cpu().double().numpy()
+            omega_inv = omega_inv + gamma_0 * np.eye(num_param)
+            omega_np = np.linalg.inv(omega_inv)
             omega_np = (omega_np + omega_np.T) / 2.0
 
             # double check that Omega is PD, if not then repeat calculation
@@ -409,12 +410,7 @@ class IterativeSieveLearner(AbstractLearner):
                                  moments_expended)
             mat_2 = torch.einsum("bkn,blm,nm->knlm",
                                  f_basis, f_basis, gamma_mat)
-            num_param = mat_1.shape[0] * mat_1.shape[1]
-            mat_0 = gamma_0 * torch.eye(num_param).reshape(mat_1.shape)
-            # mat_0 = gamma_0 * torch.ones_like(mat_1)
-            if device is not None:
-                mat_0 = mat_0.to(device)
-            f_mat = f_mat + (mat_0 + mat_1 + mat_2) / batch_scale
+            f_mat = f_mat + (mat_1 + mat_2) / batch_scale
             batch_size_sum += len(batch["s"]) / batch_scale
 
         self.model.train()
