@@ -88,3 +88,8 @@ class FeedForwardCritic(AbstractCritic):
     def get_w(self, s):
         _, _, _, w = self(s, a=None, calc_w=True)
         return w
+
+    def get_all(self, s, a):
+        q, xi, eta, w = self(s, a, calc_q=True, calc_xi=True,
+                             calc_eta=True, calc_w=True)
+        return q, xi, eta, w

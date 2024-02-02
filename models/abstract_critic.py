@@ -19,3 +19,7 @@ class AbstractCritic(ABC, nn.Module):
     @abstractmethod
     def get_w(self, s):
         pass
+
+    @abstractmethod
+    def get_all(self, s, a):
+        pass

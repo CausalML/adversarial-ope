@@ -85,7 +85,7 @@ class AbstractLearner(ABC):
         else:
             return torch.cat(moments_list, dim=1).sum(1)
 
-    def get_batch_l2_reg(self, batch, pi_e_name):
+    def get_batch_l2_reg_model(self, batch, pi_e_name):
         s = batch["s"]
         a = batch["a"]
         ss = batch["ss"]
@@ -101,6 +101,20 @@ class AbstractLearner(ABC):
             reg_sum += (eta ** 2).mean()
         if self.train_w:
             reg_sum += (w ** 2).mean()
+        return reg_sum
+
+    def get_batch_l2_reg_critic(self, batch, critic):
+        s = batch["s"]
+        a = batch["a"]
+        f_q, f_xi, f_eta, f_w  = critic.get_all(s, a)
+        reg_sum = 0
+        if self.train_q_xi:
+            reg_sum += (f_q ** 2).mean()
+            reg_sum += (f_xi ** 2).mean()
+        if self.train_eta:
+            reg_sum += (f_eta ** 2).mean()
+        if self.train_w:
+            reg_sum += (f_w ** 2).mean()
         return reg_sum
 
     def get_q_xi_batch_moments(self, critic, s, a, ss, r, pi_ss,

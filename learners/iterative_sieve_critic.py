@@ -45,6 +45,12 @@ class SieveCritic(AbstractCritic):
         w = self.w_linear(w_basis)
         return w 
 
+    def get_all(self, s, a):
+        q, xi = self.get_q_xi(s, a)
+        eta = self.get_eta(eta)
+        w = self.get_w(w)
+        return q, xi, eta, w
+
     def get_q_xi_basis_expansion(self, s, a):
         # q_bias = torch.ones(len(s), 1).to(s.device)
         # xi_bias = torch.ones(len(s), 1).to(s.device)
@@ -116,7 +122,8 @@ class IterativeSieveLearner(AbstractLearner):
               model_max_epoch=100, model_min_epoch=2, model_grad_clip=None,
               model_eval_freq=2, model_max_no_improve=3, model_lr=1e-3,
               model_reg_alpha=0, model_reg_alpha_final=0,
-              model_max_epoch_final=500, model_min_epoch_final=50,
+              critic_reg_alpha=0, model_max_epoch_final=500,
+              model_min_epoch_final=50,
               model_eval_freq_final=2, model_max_no_improve_final=5,
               model_lr_final=1e-4, model_grad_clip_final=None,
               critic_max_epoch=100, critic_min_epoch=4,
@@ -173,7 +180,7 @@ class IterativeSieveLearner(AbstractLearner):
                 max_num_epoch=critic_max_epoch,
                 s_init=s_init, min_num_epoch=critic_min_epoch,
                 max_no_improve=critic_max_no_improve,
-                eval_freq=critic_eval_freq,
+                eval_freq=critic_eval_freq, critic_reg_alpha=critic_reg_alpha,
                 iter_i=iter_i, lr=critic_lr, verbose=verbose, 
             )
 
@@ -304,7 +311,7 @@ class IterativeSieveLearner(AbstractLearner):
                 # print(rho_f_2)
                 # loss = 0.5 * torch.einsum("xy,x,y->", omega, rho_f_1, rho_f_2)
                 loss = 0.5 * torch.einsum("xy,x,y->", omega, rho_f_1, rho_f_2)
-                loss_reg = reg_alpha * self.get_batch_l2_reg(
+                loss_reg = reg_alpha * self.get_batch_l2_reg_model(
                     batch=batch, pi_e_name=pi_e_name
                 )
                 # print(loss)
@@ -418,7 +425,8 @@ class IterativeSieveLearner(AbstractLearner):
 
     def train_next_critic(self, critic, dl, dl_val, pi_e_name, s_init,
                           max_num_epoch, min_num_epoch, max_no_improve,
-                          eval_freq, lr, iter_i, verbose=False):
+                          critic_reg_alpha, eval_freq, lr, iter_i,
+                          verbose=False):
         self.model.train()
         critic.train()
         critic_optim = Adam(critic.parameters(), lr=lr)
@@ -433,6 +441,11 @@ class IterativeSieveLearner(AbstractLearner):
                     pi_e_name=pi_e_name, critic_grad=True,
                 )
                 obj = moments.mean() - 0.5 * (moments ** 2).mean()
+                reg = critic_reg_alpha * self.get_batch_l2_reg_critic(
+                    batch=batch, critic=critic,
+                )
+                if critic_reg_alpha:
+                    f_q, f_xi, f_eta, f_w = critic.get_all()
                 loss = (-1.0 * obj)
 
                 critic_optim.zero_grad()
