@@ -52,6 +52,20 @@ class SieveCritic(AbstractCritic):
         w = self.get_w(s)
         return q, xi, eta, w
 
+    def get_next_func_batch_reg(self, batch, train_q_xi, train_eta, train_w):
+        s = batch["s"]
+        a = batch["a"]
+        f_q, f_xi, f_eta, f_w = self.net.get_all(s, a)
+        reg_sum = 0
+        if train_q_xi:
+            reg_sum += (f_q ** 2).mean()
+            reg_sum += (f_xi ** 2).mean()
+        if train_eta:
+            reg_sum += (f_eta ** 2).mean()
+        if train_w:
+            reg_sum += (f_w ** 2).mean()
+        return reg_sum
+
     def get_q_xi_basis_expansion(self, s, a):
         # q_bias = torch.ones(len(s), 1).to(s.device)
         # xi_bias = torch.ones(len(s), 1).to(s.device)
@@ -451,9 +465,14 @@ class IterativeSieveLearner(AbstractLearner):
                 )
                 obj = moments.mean() - 0.5 * (moments ** 2).mean()
                 if critic_reg_alpha:
-                    reg = critic_reg_alpha * self.get_batch_l2_reg_critic(
+                    reg_1 = self.get_batch_l2_reg_critic(
                         batch=batch, critic=critic,
                     )
+                    reg_2 = critic.get_next_func_batch_reg(
+                        batch=batch, train_q_xi=self.train_q_xi,
+                        train_eta=self.train_eta, train_w=self.train_w,
+                    )
+                    reg = critic_reg_alpha * (reg_1 + reg_2)
                 else:
                     reg = 0
                 loss = (-1.0 * obj + reg)
