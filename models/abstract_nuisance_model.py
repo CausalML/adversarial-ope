@@ -22,11 +22,11 @@ class AbstractNuisanceModel(ABC):
         pass
 
     @abstractmethod
-    def get_q_v_xi(self, s, a, ss, pi_ss):
+    def get_q_v_beta(self, s, a, ss, pi_ss):
         pass
 
     @abstractmethod
-    def get_q_v_xi_beta(self, s, a, ss, pi_ss):
+    def get_v_beta(self, s, a, ss, pi_ss):
         pass
 
     @abstractmethod
@@ -107,8 +107,8 @@ class AbstractNuisanceModel(ABC):
 
     def estimate_policy_val_dr(self, dl, s_init, a_init, pi_e_name,
                                adversarial_lambda, gamma, normalize=False,
-                               dual_cvar=True, hard_dual_threshold=False,
-                               worst_case=True, batch_scale=1000.0):
+                               dual_cvar=True, worst_case=True,
+                               batch_scale=1000.0):
         lmbda = adversarial_lambda
         inv_lmbda = lmbda ** -1
         w_eta_sum = 0.0
@@ -120,21 +120,18 @@ class AbstractNuisanceModel(ABC):
             a = batch["a"]
             ss = batch["ss"]
             pi_ss = batch[f"pi_ss::{pi_e_name}"]
-            q, v, xi, beta = self.get_q_v_xi_beta(s, a, ss, pi_ss)
+            q, v, beta = self.get_q_v_beta(s, a, ss, pi_ss)
             r = batch["r"].unsqueeze(-1)
             if dual_cvar:
-                if hard_dual_threshold:
-                    if worst_case:
-                        cvar_v = beta - (1 + lmbda) * F.relu(beta - v)
-                    else:
-                        cvar_v = beta + (1 + lmbda) * F.relu(v - beta)
+                if worst_case:
+                    cvar_v = beta - (1 + lmbda) * F.relu(beta - v)
                 else:
-                    if worst_case:
-                        cvar_v = beta - (1 + lmbda) * xi * (beta - v)
-                    else:
-                        cvar_v = beta + (1 + lmbda) * xi * (v - beta)
+                    cvar_v = beta + (1 + lmbda) * F.relu(v - beta)
             else:
-                cvar_v = (1 + lmbda) * xi * v
+                if worst_case:
+                    cvar_v = (1 + lmbda) * (beta > v) * v
+                else:
+                    cvar_v = (1 + lmbda) * (v > beta) * v
             e_cvar_v = inv_lmbda * v + (1 - inv_lmbda) * cvar_v
             pseudo_r = r + gamma * e_cvar_v - q
 

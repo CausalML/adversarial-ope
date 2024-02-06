@@ -1,4 +1,5 @@
 from environments.toy_env import ToyEnv
+from learners.iterative_sieve_critic_lbfgs import IterativeSieveLearnerLBFGS
 from utils.policy_evaluation import evaluate_policy
 from policies.generic_policies import EpsilonSmoothPolicy
 from policies.toy_env_policies import ThresholdPolicy
@@ -14,6 +15,7 @@ def main():
     adversarial_lambda = 4.0
     batch_size = 1024
     num_sample = 10000
+    worst_case = True
 
     device = None
 
@@ -66,7 +68,8 @@ def main():
     s_dim = env.get_s_dim()
     num_a = env.get_num_a()
 
-    model_do = 0.05
+    # model_do = 0.05
+    model_do = None
     model_config = {
         "s_embed_dim": 32,
         "s_embed_layers": [32],
@@ -87,7 +90,8 @@ def main():
     model = FeedForwardNuisanceModel(s_dim=s_dim, num_a=num_a, gamma=gamma,
                                      config=model_config, device=device)
     critic_class = FeedForwardCritic
-    critic_do = 0.05
+    # critic_do = 0.05
+    critic_do = None
     critic_config = {
         "s_embed_dim": 8,
         "s_embed_layers": [8],
@@ -107,7 +111,8 @@ def main():
     learner = IterativeSieveLearner(
         nuisance_model=model, gamma=gamma,
         adversarial_lambda=adversarial_lambda,
-        train_q_xi=True, train_eta=True, train_w=True,
+        train_q_beta=True, train_eta=False, train_w=False,
+        worst_case=worst_case, use_dual_cvar=True,
     )
 
     s_init, a_init = env.get_s_a_init(pi_e)
@@ -123,11 +128,10 @@ def main():
 
     learner.train(
         dataset, pi_e_name=pi_e_name, verbose=True, device=device,
-        init_basis_func=env.bias_basis_func, num_init_basis=1,
+        # init_basis_func=env.bias_basis_func, num_init_basis=1,
         model_eval_freq=5, critic_eval_freq=5,
-        # init_basis_func=env.flexible_basis_func,
-        # num_init_basis=env.get_num_init_basis_func(),
-        # model_lr=1e-4,
+        init_basis_func=env.flexible_basis_func,
+        num_init_basis=env.get_num_init_basis_func(),
         # num_init_basis=env.get_num_init_basis_func(),
         evaluate_pv_kwargs=evaluate_pv_kwargs, critic_class=critic_class,
         s_init=s_init, critic_kwargs=critic_kwargs,
@@ -137,9 +141,9 @@ def main():
     # ## train model on Eta / W moments second
     # model.freeze_embeddings()
     # learner_2 = IterativeSieveLearner(
-    #     nuisance_model=model, gamma=gamma,
-    #     adversarial_lambda=adversarial_lambda,
-    #     train_q_xi=False, train_eta=True, train_w=True,
+    #     nuisance_model=model, gamma=gamma, 
+    #     adversarial_lambda=adversarial_lambda, worst_case=worst_case
+    #     train_q_beta=False, train_eta=True, train_w=True,
     # )
     
     # learner_2.train(
@@ -169,31 +173,22 @@ def main():
     dr_pv = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
         adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=False,
+        worst_case=worst_case,
     )
     dr_pv_dual = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
         adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True,
-        hard_dual_threshold=False,
-    )
-    dr_pv_dual_hard = model.estimate_policy_val_dr(
-        s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
-        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True,
-        hard_dual_threshold=True,
+        worst_case=worst_case,
     )
     dr_pv_norm = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
         adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=False,
-        normalize=True,
+        normalize=True, worst_case=worst_case,
     )
     dr_pv_dual_norm = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
         adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True,
-        hard_dual_threshold=False, normalize=True,
-    )
-    dr_pv_dual_hard_norm = model.estimate_policy_val_dr(
-        s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
-        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True,
-        hard_dual_threshold=True, normalize=True,
+        worst_case=worst_case,
     )
     print(f"EVALUATING FINAL BEST MODEL:")
     print(f"Q-estimated v(pi_e): {q_pv}")
@@ -201,10 +196,8 @@ def main():
     print(f"W-estimated v(pi_e) (normalized): {w_pv_norm}")
     print(f"DS/DV-estimated v(pi_e): {dr_pv}")
     print(f"DS/DV-estimated v(pi_e) (dual): {dr_pv_dual}")
-    print(f"DS/DV-estimated v(pi_e) (dual, hard threshold): {dr_pv_dual_hard}")
     print(f"DS/DV-estimated v(pi_e) (normalized): {dr_pv_norm}")
     print(f"DS/DV-estimated v(pi_e) (normalized, dual): {dr_pv_dual_norm}")
-    print(f"DS/DV-estimated v(pi_e) (normalized, dual, hard threshold): {dr_pv_dual_hard_norm}")
     print("")
 
     env_eval = ToyEnv(s_init=s_threshold, adversarial=True,

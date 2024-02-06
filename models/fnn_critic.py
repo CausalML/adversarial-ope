@@ -28,12 +28,6 @@ class FeedForwardCritic(AbstractCritic):
             layer_sizes=config["critic_layers"],
             dropout_rate=config.get("critic_do", 0.05)
         )
-        self.xi_critic = FFNet(
-            input_dim=sa_embed_size,
-            output_dim=1,
-            layer_sizes=config["critic_layers"],
-            dropout_rate=config.get("critic_do", 0.05)
-        )
         self.eta_critic = FFNet(
             input_dim=sa_embed_size,
             output_dim=1,
@@ -48,10 +42,9 @@ class FeedForwardCritic(AbstractCritic):
         )
         self.eval()
 
-    def forward(self, s, a, calc_q=False, calc_xi=False, calc_eta=False,
-                calc_w=False):
+    def forward(self, s, a, calc_q=False, calc_eta=False, calc_w=False):
         s_embed = self.s_embed_net(s)
-        if calc_q or calc_xi or calc_eta:
+        if calc_q or calc_eta:
             a_embed = self.a_embed_net(a)
             sa_concat = torch.cat([s_embed, a_embed], dim=1)
 
@@ -59,11 +52,6 @@ class FeedForwardCritic(AbstractCritic):
             f_q = self.q_critic(sa_concat)
         else:
             f_q = None
-
-        if calc_xi:
-            f_xi = self.xi_critic(sa_concat)
-        else:
-            f_xi = None
 
         if calc_eta:
             f_eta = self.eta_critic(sa_concat)
@@ -75,21 +63,20 @@ class FeedForwardCritic(AbstractCritic):
         else:
             f_w = None
 
-        return f_q, f_xi, f_eta, f_w
+        return f_q, f_eta, f_w
 
-    def get_q_xi(self, s, a):
-        q, xi, _, _ = self(s, a, calc_q=True, calc_xi=True)
-        return q, xi
+    def get_q(self, s, a):
+        q, _, _ = self(s, a, calc_q=True)
+        return q
 
     def get_eta(self, s, a):
-        _, _, eta, _ = self(s, a, calc_eta=True)
+        _,  eta, _ = self(s, a, calc_eta=True)
         return eta
 
     def get_w(self, s):
-        _, _, _, w = self(s, a=None, calc_w=True)
+        _,  _, w = self(s, a=None, calc_w=True)
         return w
 
     def get_all(self, s, a):
-        q, xi, eta, w = self(s, a, calc_q=True, calc_xi=True,
-                             calc_eta=True, calc_w=True)
-        return q, xi, eta, w
+        q, eta, w = self(s, a, calc_q=True, calc_eta=True, calc_w=True)
+        return q, eta, w

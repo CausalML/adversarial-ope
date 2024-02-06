@@ -23,18 +23,17 @@ class SieveCritic(AbstractCritic):
         self.init_only = init_only
         num_func = self.get_num_basis_func()
         self.q_linear = nn.Linear(num_func, 1, bias=False)
-        self.xi_linear = nn.Linear(num_func, 1, bias=False)
+        self.beta_linear = nn.Linear(num_func, 1, bias=False)
         self.eta_linear = nn.Linear(num_func, 1, bias=False)
         self.w_linear = nn.Linear(num_func, 1, bias=False)
 
     def disable_init_only(self):
         self.init_only = False
 
-    def get_q_xi(self, s, a):
-        q_basis, xi_basis = self.get_q_xi_basis_expansion(s, a)
+    def get_q(self, s, a):
+        q_basis = self.get_q_basis_expansion(s, a)
         q = self.q_linear(q_basis)
-        xi = self.xi_linear(xi_basis)
-        return q, xi
+        return q
 
     def get_eta(self, s, a):
         eta_basis = self.get_eta_basis_expansion(s, a)
@@ -47,41 +46,37 @@ class SieveCritic(AbstractCritic):
         return w 
 
     def get_all(self, s, a):
-        q, xi = self.get_q_xi(s, a)
+        q = self.get_q(s, a)
         eta = self.get_eta(s, a)
         w = self.get_w(s)
-        return q, xi, eta, w
+        return q, eta, w
 
-    def get_next_func_batch_reg(self, batch, train_q_xi, train_eta, train_w):
+    def get_next_func_batch_reg(self, batch, train_q_beta, train_eta, train_w):
         s = batch["s"]
         a = batch["a"]
-        f_q, f_xi, f_eta, f_w = self.net.get_all(s, a)
+        f_q, f_eta, f_w = self.net.get_all(s, a)
         reg_sum = 0
-        if train_q_xi:
+        if train_q_beta:
             reg_sum += (f_q ** 2).mean()
-            reg_sum += (f_xi ** 2).mean()
         if train_eta:
             reg_sum += (f_eta ** 2).mean()
         if train_w:
             reg_sum += (f_w ** 2).mean()
         return reg_sum
 
-    def get_q_xi_basis_expansion(self, s, a):
+    def get_q_basis_expansion(self, s, a):
         # q_bias = torch.ones(len(s), 1).to(s.device)
-        # xi_bias = torch.ones(len(s), 1).to(s.device)
+        # beta_bias = torch.ones(len(s), 1).to(s.device)
         q_init = self.init_basis_func(s, a)
-        xi_init = self.init_basis_func(s, a)
         if self.init_only:
-            return q_init, xi_init
+            return q_init
         else:
-            q_new, xi_new = self.net.get_q_xi(s, a)
+            q_new = self.net.get_q(s, a)
             q_list = [q_init, q_new]
-            xi_list = [xi_init, xi_new]
             for critic in self.prev_net_list:
-                q, xi = critic.get_q_xi(s, a)
+                q = critic.get_q(s, a)
                 q_list.append(q.detach())
-                xi_list.append(xi.detach())
-            return torch.cat(q_list, dim=1), torch.cat(xi_list, dim=1)
+            return torch.cat(q_list, dim=1)
 
     def get_eta_basis_expansion(self, s, a):
         # eta_bias = torch.ones(len(s), 1).to(s.device)
@@ -121,29 +116,29 @@ class SieveCritic(AbstractCritic):
 
 class IterativeSieveLearner(AbstractLearner):
     def __init__(self, nuisance_model, gamma, adversarial_lambda,
-                 train_q_xi=True, train_eta=True, train_w=True,
+                 train_q_beta=True, train_eta=True, train_w=True,
                  use_dual_cvar=True, worst_case=True):
         super().__init__(
             nuisance_model=nuisance_model, gamma=gamma,
             adversarial_lambda=adversarial_lambda, worst_case=worst_case,
-            train_q_xi=train_q_xi, train_eta=train_eta, train_w=train_w,
+            train_q_beta=train_q_beta, train_eta=train_eta, train_w=train_w,
             use_dual_cvar=use_dual_cvar,
         )
 
     def train(self, dataset, pi_e_name, critic_class, critic_kwargs,
               s_init, init_basis_func, num_init_basis,
-              evaluate_pv_kwargs=None, batch_size=1024, gamma_tik=1e-3,
-              gamma_0=1e-4, total_num_iterations=20, val_frac=0.1, 
-              model_max_epoch=100, model_min_epoch=2, model_grad_clip=None,
-              model_eval_freq=2, model_max_no_improve=3, model_lr=1e-3,
-              model_reg_alpha=1e-3, model_reg_alpha_final=1e-3,
-              critic_reg_alpha=1e-3, model_max_epoch_final=500,
-              model_min_epoch_final=50,
+              evaluate_pv_kwargs=None, batch_size=1024, gamma_tik=1e-5,
+              gamma_0=1e-2, total_num_iterations=20, val_frac=0.1, 
+              model_max_epoch=50, model_min_epoch=2, 
+              model_eval_freq=2, model_max_no_improve=3,
+              model_lr=1e-4, beta_lr=1e-3, model_reg_alpha=1e-6,
+              model_reg_alpha_final=1e-6, critic_reg_alpha=1e-5,
+              model_max_epoch_final=500, model_min_epoch_final=50,
               model_eval_freq_final=2, model_max_no_improve_final=5,
-              model_lr_final=1e-4, model_grad_clip_final=None,
+              model_lr_final=1e-4, beta_lr_final=1e-3, num_beta_sub_epoch=5,
               critic_max_epoch=100, critic_min_epoch=4,
-              critic_eval_freq=4, critic_max_no_improve=2, critic_lr=5e-3,
-              verbose=False, device=None):
+              critic_eval_freq=4, critic_max_no_improve=2,
+              critic_lr=5e-3, verbose=False, device=None):
 
         train_data, val_data = dataset.get_train_dev_split(val_frac)
         dl = train_data.get_batch_loader(batch_size)
@@ -167,11 +162,12 @@ class IterativeSieveLearner(AbstractLearner):
                 critic=critic, dl=dl, dl_2=dl_2, dl_val=dl_val,
                 s_init=s_init, pi_e_name=pi_e_name, gamma_0=gamma_0,
                 gamma_tik=gamma_tik, min_num_epoch=model_min_epoch,
-                max_num_epoch=model_max_epoch,
+                max_num_epoch=model_max_epoch, beta_lr=beta_lr,
+                num_beta_sub_epoch=num_beta_sub_epoch,
                 max_no_improve=model_max_no_improve,
-                eval_freq=model_eval_freq, grad_clip=model_grad_clip,
-                reg_alpha=model_reg_alpha,
-                iter_i=iter_i, lr=model_lr, verbose=verbose, device=device,
+                eval_freq=model_eval_freq, 
+                reg_alpha=model_reg_alpha, iter_i=iter_i, lr=model_lr,
+                verbose=verbose, device=device,
             )
             if verbose and (evaluate_pv_kwargs is not None):
                 self.print_policy_value_estimates(**evaluate_pv_kwargs)
@@ -206,13 +202,33 @@ class IterativeSieveLearner(AbstractLearner):
             gamma_tik=gamma_tik, min_num_epoch=model_min_epoch_final,
             max_num_epoch=model_max_epoch_final,
             max_no_improve=model_max_no_improve_final,
-            eval_freq=model_eval_freq_final, grad_clip=model_grad_clip_final,
-            reg_alpha=model_reg_alpha_final,
+            eval_freq=model_eval_freq_final,
+            reg_alpha=model_reg_alpha_final, beta_lr=beta_lr_final,
+            num_beta_sub_epoch=num_beta_sub_epoch,
             iter_i="FINAL", lr=model_lr_final, verbose=verbose, device=device,
         )
         self.model.set_state(best_state)
 
     def print_policy_value_estimates(self, s_init, a_init, pi_e_name, dl_test):
+        xi_sum = 0
+        batch_sum = 0
+        for batch in dl_test:
+            s = batch["s"]
+            a = batch["a"]
+            ss = batch["ss"]
+            pi_ss = batch[f"pi_ss::{pi_e_name}"]
+            v, beta = self.model.get_v_beta(s, a, ss, pi_ss)
+            # print(v[:10])
+            # print(beta[:10])
+            mean, std = (beta - v).mean(), (beta - v).std()
+            # print(mean, std)
+            xi = (beta > v) * 1.0
+            xi_sum += float(xi.sum()) / 1000.0
+            # print(xi.mean())
+            batch_sum += len(s) / 1000.0
+            # print(f"mean beta: {beta.mean()}, diff: {mean}, std: {std}, p: {xi.mean()}")
+        print(f"mean xi: {xi_sum / batch_sum}")
+
         q_pv = self.model.estimate_policy_val_q(
             s_init=s_init, a_init=a_init, gamma=self.gamma
         )
@@ -225,32 +241,22 @@ class IterativeSieveLearner(AbstractLearner):
         dr_pv = self.model.estimate_policy_val_dr(
             s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
             gamma=self.gamma, adversarial_lambda=self.adversarial_lambda,
-            dual_cvar=False,
+            dual_cvar=False, worst_case=self.worst_case,
         )
         dr_pv_dual = self.model.estimate_policy_val_dr(
             s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
             adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
-            dual_cvar=True, hard_dual_threshold=False,
-        )
-        dr_pv_dual_hard = self.model.estimate_policy_val_dr(
-            s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
-            adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
-            dual_cvar=True, hard_dual_threshold=True,
+            dual_cvar=True, worst_case=self.worst_case,
         )
         dr_pv_norm = self.model.estimate_policy_val_dr(
             s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
             adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
-            dual_cvar=False, normalize=True,
+            dual_cvar=False, normalize=True, worst_case=self.worst_case,
         )
         dr_pv_dual_norm = self.model.estimate_policy_val_dr(
             s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
             adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
-            dual_cvar=True, hard_dual_threshold=False, normalize=True,
-        )
-        dr_pv_dual_hard_norm = self.model.estimate_policy_val_dr(
-            s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
-            adversarial_lambda=self.adversarial_lambda, gamma=self.gamma,
-            dual_cvar=True, hard_dual_threshold=True, normalize=True,
+            dual_cvar=True, normalize=True, worst_case=self.worst_case,
         )
         print(f"Intermediate policy value results:")
         print(f"Q-estimated v(pi_e): {q_pv}")
@@ -258,15 +264,14 @@ class IterativeSieveLearner(AbstractLearner):
         print(f"W-estimated v(pi_e) (normalized): {w_pv_norm}")
         print(f"DS/DV-estimated v(pi_e): {dr_pv}")
         print(f"DS/DV-estimated v(pi_e) (dual): {dr_pv_dual}")
-        print(f"DS/DV-estimated v(pi_e) (dual, hard threshold): {dr_pv_dual_hard}")
         print(f"DS/DV-estimated v(pi_e) (normalized): {dr_pv_norm}")
         print(f"DS/DV-estimated v(pi_e) (normalized, dual): {dr_pv_dual_norm}")
-        print(f"DS/DV-estimated v(pi_e) (normalized, dual, hard threshold): {dr_pv_dual_hard_norm}")
         print("")
 
     def update_model(self, critic, dl, dl_2, dl_val, pi_e_name, max_num_epoch,
-                     s_init, min_num_epoch, max_no_improve, grad_clip,
-                     eval_freq, lr, gamma_0, gamma_tik, iter_i, reg_alpha,
+                     s_init, min_num_epoch, max_no_improve,
+                     beta_lr, num_beta_sub_epoch, eval_freq, lr,
+                     gamma_0, gamma_tik, iter_i, reg_alpha,
                      device, verbose=False, eig_threshold=1e-5):
 
         self.model.train()
@@ -301,53 +306,35 @@ class IterativeSieveLearner(AbstractLearner):
 
         # second do SGD on quadratic weighted loss
         model_optim = Adam(self.model.get_parameters(), lr=lr)
+        beta_optim = Adam(self.model.get_beta_parameters(), lr=beta_lr)
         if verbose:
-            init_val_loss, init_val_moment_losses = self.get_mean_model_loss(
+            init_loss, init_moment_losses = self.get_mean_model_loss(
                 critic=critic, s_init=s_init,
                 dl=dl_val, pi_e_name=pi_e_name, omega=omega,
             )
+            init_beta_loss = self.get_mean_beta_loss(
+                dl=dl_val, pi_e_name=pi_e_name
+            )
             print(f"MODEL: iter {iter_i}")
-            print(f"Starting val loss: {init_val_loss},"
-                  f" per moment: {init_val_moment_losses}")
+            print(f"Starting val loss: {init_loss},"
+                    f" beta loss: {init_beta_loss}"
+                    f" per moment: {init_moment_losses}")
             print("")
         best_val = float("inf")
         best_state = deepcopy(self.model.get_state())
         num_no_improve = 0
 
         for epoch_i in range(1, max_num_epoch+1):
-            dl_2_iter = iter(dl_2)
-            for batch in dl:
-                batch_2 = next(dl_2_iter)
-                moments_1 = self.get_batch_moments(
-                    batch=batch, critic=critic, s_init=s_init,
-                    pi_e_name=pi_e_name, model_grad=True, basis_expansion=True
+            self.train_model_one_epoch(
+                model_optim=model_optim, critic=critic, dl=dl, dl_2=dl_2,
+                omega=omega, s_init=s_init, pi_e_name=pi_e_name,
+                alpha_reg=reg_alpha,
+            )
+            for _ in range(num_beta_sub_epoch):
+                self.train_beta_one_epoch(
+                    beta_optim=beta_optim, dl=dl, pi_e_name=pi_e_name,
+                    alpha_reg=reg_alpha,
                 )
-                moments_2 = self.get_batch_moments( 
-                    batch=batch_2, critic=critic, s_init=s_init,
-                    pi_e_name=pi_e_name, model_grad=True, basis_expansion=True,
-                )
-                rho_f_1 = moments_1.mean(0).view(-1)
-                rho_f_2 = moments_2.mean(0).view(-1)
-                # print(rho_f_1)
-                # print(rho_f_2)
-                # loss = 0.5 * torch.einsum("xy,x,y->", omega, rho_f_1, rho_f_2)
-                loss = 0.5 * torch.einsum("xy,x,y->", omega, rho_f_1, rho_f_2)
-                if reg_alpha:
-                    loss_reg = reg_alpha * self.get_batch_l2_reg_model(
-                        batch=batch, pi_e_name=pi_e_name
-                    )
-                else:
-                    loss_reg = 0
-                # print(loss)
-
-                model_optim.zero_grad()
-                (loss + loss_reg).backward()
-                if grad_clip:
-                    torch.nn.utils.clip_grad_norm_(
-                        parameters=self.model.get_parameters(),
-                        max_norm=grad_clip, norm_type="inf",
-                    )
-                model_optim.step()
 
             if epoch_i % eval_freq == 0:
                 val_loss, val_moment_losses = self.get_mean_model_loss(
@@ -359,6 +346,12 @@ class IterativeSieveLearner(AbstractLearner):
                         critic=critic, s_init=s_init, dl=dl,
                         pi_e_name=pi_e_name, omega=omega,
                     )
+                    train_beta_loss = self.get_mean_beta_loss(
+                        dl=dl, pi_e_name=pi_e_name
+                    ) 
+                    val_beta_loss = self.get_mean_beta_loss(
+                        dl=dl_val, pi_e_name=pi_e_name
+                    ) 
 
                 if val_loss < best_val:
                     best_val = val_loss
@@ -370,8 +363,10 @@ class IterativeSieveLearner(AbstractLearner):
                 if verbose:
                     print(f"MODEL: iter {iter_i}, epoch {epoch_i}")
                     print(f"mean train loss: {train_loss},"
+                          f" beta loss: {train_beta_loss}"
                           f" per moment: {train_moment_losses}")
                     print(f"mean val loss: {val_loss},"
+                          f" beta loss: {val_beta_loss}"
                           f" per moment: {val_moment_losses}")
                     if num_no_improve == 0:
                         print("NEW BEST")
@@ -386,6 +381,34 @@ class IterativeSieveLearner(AbstractLearner):
         # print("")
         self.model.eval()
         return best_state
+
+    def train_model_one_epoch(self, model_optim, critic, dl, dl_2, omega,
+                              s_init, pi_e_name, alpha_reg):
+        for batch in dl:
+            dl_2_iter = iter(dl_2)
+            for batch in dl:
+                batch_2 = next(dl_2_iter)
+                moments_1 = self.get_batch_moments(
+                    batch=batch, critic=critic, s_init=s_init,
+                    pi_e_name=pi_e_name, model_grad=True, basis_expansion=True
+                )
+                moments_2 = self.get_batch_moments( 
+                    batch=batch_2, critic=critic, s_init=s_init,
+                    pi_e_name=pi_e_name, model_grad=True, basis_expansion=True,
+                )
+                rho_f_1 = moments_1.mean(0).view(-1)
+                rho_f_2 = moments_2.mean(0).view(-1)
+                model_optim.zero_grad()
+                m_loss = torch.einsum("xy,x,y->", omega, rho_f_1, rho_f_2)
+                if alpha_reg:
+                    m_reg = alpha_reg * self.get_batch_l2_reg_model(
+                        batch=batch, pi_e_name=pi_e_name
+                    )
+                else:
+                    m_reg = 0
+
+                (m_loss + m_reg).backward()
+                model_optim.step()
 
     def get_mean_model_loss(self, critic, dl, pi_e_name, omega, s_init,
                             batch_scale=1000.0):
@@ -408,7 +431,7 @@ class IterativeSieveLearner(AbstractLearner):
             batch_size_sum += len(batch["s"]) / batch_scale
 
         rho_f_mean = rho_f_sum / batch_size_sum
-        loss = torch.einsum("xy,x,y->", omega, rho_f_mean, rho_f_mean)
+        m_loss = torch.einsum("xy,x,y->", omega, rho_f_mean, rho_f_mean)
         moment_losses = []
         num_k = len(rho_f_sum) // num_m
         for i in range(num_m):
@@ -418,7 +441,37 @@ class IterativeSieveLearner(AbstractLearner):
                                   rho_f_mean_i).unsqueeze(0)
             moment_losses.append(loss_i)
         self.model.train()
-        return loss, torch.cat(moment_losses)
+        return m_loss, torch.cat(moment_losses)
+
+    def train_beta_one_epoch(self, beta_optim, dl, pi_e_name, alpha_reg):
+        for batch in dl:
+            beta_optim.zero_grad()
+            beta_loss = self.get_batch_quantile_loss(
+                batch=batch, pi_e_name=pi_e_name,
+            )
+            if alpha_reg:
+                beta_reg = alpha_reg * self.get_batch_l2_reg_beta(batch)
+            else:
+                beta_reg = 0
+            (beta_loss + beta_reg).backward()
+            beta_optim.step()
+
+    def get_mean_beta_loss(self, dl, pi_e_name, batch_scale=1000.0):
+        self.model.eval()
+        beta_loss_sum = 0
+        batch_size_sum = 0
+
+        for batch in dl:
+            beta_loss = self.get_batch_quantile_loss(
+                batch=batch, pi_e_name=pi_e_name,
+            )
+            batch_n = len(batch["s"])
+            beta_loss_sum += float(beta_loss) * batch_n / batch_scale
+            batch_size_sum += batch_n / batch_scale
+
+        beta_loss = beta_loss_sum / batch_size_sum
+        self.model.train()
+        return beta_loss
 
     def get_omega_inv(self, critic, dl, pi_e_name, s_init, gamma_tik,
                       batch_scale=1000.0, device=None):
@@ -469,7 +522,7 @@ class IterativeSieveLearner(AbstractLearner):
                         batch=batch, critic=critic,
                     )
                     reg_2 = critic.get_next_func_batch_reg(
-                        batch=batch, train_q_xi=self.train_q_xi,
+                        batch=batch, train_q_beta=self.train_q_beta,
                         train_eta=self.train_eta, train_w=self.train_w,
                     )
                     reg = critic_reg_alpha * (reg_1 + reg_2)

@@ -9,7 +9,7 @@ class AbstractCritic(ABC, nn.Module):
         self.num_a = num_a
 
     @abstractmethod
-    def get_q_xi(self, s, a):
+    def get_q(self, s, a):
         pass
 
     @abstractmethod

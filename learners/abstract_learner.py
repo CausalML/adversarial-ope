@@ -1,18 +1,19 @@
 from abc import ABC, abstractmethod
 
 import torch
+import torch.nn.functional as F
 
 from models.abstract_nuisance_model import AbstractNuisanceModel
 
 class AbstractLearner(ABC):
     def __init__(self, nuisance_model, gamma, adversarial_lambda,
-                 train_q_xi=False, train_eta=True, train_w=False,
+                 train_q_beta=False, train_eta=True, train_w=False,
                  worst_case=True, use_dual_cvar=True):
         self.model = nuisance_model
         self.gamma = gamma
         self.adversarial_lambda = adversarial_lambda
         self.worst_case = worst_case
-        self.train_q_xi = train_q_xi
+        self.train_q_beta = train_q_beta
         self.train_eta = train_eta
         self.train_w = train_w
         self.use_dual_cvar = use_dual_cvar
@@ -20,16 +21,37 @@ class AbstractLearner(ABC):
         super().__init__()
 
     def get_num_moments(self):
-        return 2 * self.train_q_xi + 1 * self.train_eta + 1 * self.train_w
+        # return 2 * self.train_q_beta + 1 * self.train_eta + 1 * self.train_w
+        return 1 * self.train_q_beta + 1 * self.train_eta + 1 * self.train_w
+
+    def get_batch_quantile_loss(self, batch, pi_e_name):
+        lmbda = self.adversarial_lambda
+        alpha = 1 / (1 + lmbda)
+
+        s = batch["s"]
+        # s_noise = torch.randn(s.shape).to(s.device) * 0
+        # s = s + s_noise
+        a = batch["a"]
+        ss = batch["ss"]
+        pi_ss = batch[f"pi_ss::{pi_e_name}"]
+
+        v, beta = self.model.get_v_beta(s, a, ss, pi_ss)
+        if self.worst_case:
+            loss = (1 - alpha) * F.relu(beta - v) + alpha * F.relu(v - beta)
+        else:
+            loss = (1 - alpha) * F.relu(v - beta) + alpha * F.relu(beta - v)
+        # multiply by 1 - self.gamma so loss is on gamma-invariant scale
+        return (1 - self.gamma) * loss.mean()
+        # return 100.0 * loss.mean()
 
     def get_critic_basis_expansion(self, batch, critic):
         basis_list = []
-        if self.train_q_xi:
-            q_basis, xi_basis = critic.get_q_xi_basis_expansion(
+        if self.train_q_beta:
+            q_basis = critic.get_q_basis_expansion(
                 s=batch["s"], a=batch["a"]
             )
             basis_list.append(q_basis)
-            basis_list.append(xi_basis)
+            # basis_list.append(beta_basis)
         if self.train_eta:
             eta_basis = critic.get_eta_basis_expansion(
                 s=batch["s"], a=batch["a"]
@@ -54,14 +76,13 @@ class AbstractLearner(ABC):
         pi_ss = batch[f"pi_ss::{pi_e_name}"]
 
         moments_list = []
-        if self.train_q_xi:
-            q_m, xi_m = self.get_q_xi_batch_moments(
+        if self.train_q_beta:
+            q_m = self.get_q_batch_moments(
                 critic=critic, s=s, a=a, ss=ss, r=r, pi_ss=pi_ss,
                 model_grad=model_grad, critic_grad=critic_grad,
                 basis_expansion=basis_expansion
             )
             moments_list.append(q_m)
-            moments_list.append(xi_m)
 
         if self.train_eta:
             eta_m = self.get_eta_batch_moments(
@@ -90,71 +111,70 @@ class AbstractLearner(ABC):
         a = batch["a"]
         ss = batch["ss"]
         pi_ss = batch[f"pi_ss::{pi_e_name}"]
-        r = batch["r"]
-        q, v, _, beta, eta, w  = self.model.get_all(s, a, ss, pi_ss)
+        q, v, _, eta, w  = self.model.get_all(s, a, ss, pi_ss)
         reg_sum = 0
-        if self.train_q_xi:
+        if self.train_q_beta:
             reg_sum += (q ** 2).mean()
             reg_sum += (v ** 2).mean()
-            reg_sum += (beta ** 2).mean()
         if self.train_eta:
             reg_sum += (eta ** 2).mean()
         if self.train_w:
             reg_sum += (w ** 2).mean()
         return reg_sum
 
+    def get_batch_l2_reg_beta(self, batch):
+        s = batch["s"]
+        a = batch["a"]
+        beta = self.model.get_beta(s, a)
+        return (beta ** 2).mean()
+
     def get_batch_l2_reg_critic(self, batch, critic):
         s = batch["s"]
         a = batch["a"]
-        f_q, f_xi, f_eta, f_w  = critic.get_all(s, a)
+        f_q, f_eta, f_w  = critic.get_all(s, a)
         reg_sum = 0
-        if self.train_q_xi:
+        if self.train_q_beta:
             reg_sum += (f_q ** 2).mean()
-            reg_sum += (f_xi ** 2).mean()
         if self.train_eta:
             reg_sum += (f_eta ** 2).mean()
         if self.train_w:
             reg_sum += (f_w ** 2).mean()
         return reg_sum
 
-    def get_q_xi_batch_moments(self, critic, s, a, ss, r, pi_ss,
-                               model_grad=False, critic_grad=False,
-                               basis_expansion=False):
+    def get_q_batch_moments(self, critic, s, a, ss, r, pi_ss,
+                            model_grad=False, critic_grad=False,
+                            basis_expansion=False):
 
-        q, v, xi, beta = self.model.get_q_v_xi_beta(s, a, ss, pi_ss)
+        q, v, beta = self.model.get_q_v_beta(s, a, ss, pi_ss)
         lmbda = self.adversarial_lambda
         inv_lmbda = lmbda ** -1
-        alpha = 1 / (1 + lmbda)
         assert inv_lmbda > 0
         assert inv_lmbda <= 1
         if self.use_dual_cvar:
             if self.worst_case:
-                cvar_v = beta - (1 + lmbda) * xi * (beta - v)
+                cvar_v = beta - (1 + lmbda) * F.relu(beta - v)
             else:
-                cvar_v = beta + (1 + lmbda) * xi * (v - beta)
+                cvar_v = beta + (1 + lmbda) * F.relu(v - beta)
         else:
-            cvar_v = (1 + lmbda) * xi * v
+            if self.worst_case:
+                cvar_v = (1 + lmbda) * (beta > v) * v
+            else:
+                cvar_v = (1 + lmbda) * (v > beta) * v
         e_cvar_v = inv_lmbda * v + (1 - inv_lmbda) * cvar_v
         rho_q = q  - r.unsqueeze(-1) - self.gamma * e_cvar_v
         rho_q = rho_q * (1 - self.gamma)
-        if self.worst_case:
-            # estimating worst-case Q function within sensitivity model
-            rho_xi = xi - alpha
-        else:
-            # esimating best-case Q function within sensitivity model
-            rho_xi = xi - (1 - alpha)
         if not model_grad:
-            rho_q, rho_xi = rho_q.detach(), rho_xi.detach()
+            rho_q = rho_q.detach()
 
         if basis_expansion:
-            f_q, f_xi = critic.get_q_xi_basis_expansion(s, a)
+            f_q = critic.get_q_basis_expansion(s, a)
         else:
-            f_q, f_xi = critic.get_q_xi(s, a)
+            f_q = critic.get_q(s, a)
 
         if not critic_grad:
-            f_q, f_xi = f_q.detach(), f_xi.detach()
+            f_q = f_q.detach()
 
-        return rho_q * f_q, rho_xi * f_xi
+        return rho_q * f_q
 
     def get_eta_batch_moments(self, critic, s, a, pi_s,
                               model_grad=False, critic_grad=False,
@@ -182,13 +202,18 @@ class AbstractLearner(ABC):
         w_ss = self.model.get_w(ss)
         pi_e_match = (pi_s == a).reshape(-1, 1) * 1.0
         eta = self.model.get_eta(s, a) * pi_e_match
-        xi = self.model.get_xi(s, a, ss, pi_ss)
+        v, beta = self.model.get_v_beta(s, a, ss, pi_ss)
+        if self.worst_case:
+            xi = (beta > v) * 1.0
+        else:
+            xi = (v > beta) * 1.0
+        # xi = self.model.get_xi(s, a, ss, pi_ss)
         if not model_grad:
             w = w.detach()
             w_ss = w_ss.detach()
             eta = eta.detach()
             xi = xi.detach()
-        elif not self.train_q_xi:
+        elif not self.train_q_beta:
             xi = xi.detach()
         elif not self.train_eta:
             eta = eta.detach()
