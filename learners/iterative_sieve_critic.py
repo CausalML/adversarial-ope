@@ -309,7 +309,7 @@ class IterativeSieveLearner(AbstractLearner):
                      s_init, min_num_epoch, max_no_improve,
                      beta_lr, num_beta_sub_epoch, eval_freq, lr,
                      gamma_0, gamma_tik, iter_i, reg_alpha,
-                     device, verbose=False, eig_threshold=1e-2):
+                     device, verbose=False, eig_threshold=1e-3):
 
         self.model.train()
         # first compute omega "weighting" matrix for loss function
@@ -357,6 +357,7 @@ class IterativeSieveLearner(AbstractLearner):
         eig_vals, eig_vecs = np.linalg.eigh(omega_inv_np)
         idx = [i_ for i_, v_ in enumerate(eig_vals) if v_ > eig_threshold]
         sig_inv = torch.FloatTensor(eig_vals[idx]).to(omega_inv.device) ** -1
+        s = sig_inv - (eig_threshold ** -1)
         u = torch.FloatTensor(eig_vecs[:, idx]).to(omega_inv.device)
         # print(sorted(eig_vals))
         # print(sig_inv.shape)
@@ -367,7 +368,8 @@ class IterativeSieveLearner(AbstractLearner):
         if verbose:
             init_loss = self.get_mean_model_loss(
                 critic=critic, s_init=s_init,
-                dl=dl_val, pi_e_name=pi_e_name, sig_inv=sig_inv, u=u,
+                dl=dl_val, pi_e_name=pi_e_name, s=s, u=u,
+                eig_threshold=eig_threshold,
             )
             init_beta_loss = self.get_mean_beta_loss(
                 dl=dl_val, pi_e_name=pi_e_name
@@ -384,8 +386,8 @@ class IterativeSieveLearner(AbstractLearner):
         for epoch_i in range(1, max_num_epoch+1):
             self.train_model_one_epoch(
                 model_optim=model_optim, critic=critic, dl=dl, dl_2=dl_2,
-                sig_inv=sig_inv, u=u, s_init=s_init, pi_e_name=pi_e_name,
-                alpha_reg=reg_alpha,
+                s=s, u=u, s_init=s_init, pi_e_name=pi_e_name,
+                alpha_reg=reg_alpha, eig_threshold=eig_threshold,
             )
             # for _ in range(num_beta_sub_epoch):
             beta_optim = LBFGS(self.model.get_beta_parameters(),
@@ -398,12 +400,14 @@ class IterativeSieveLearner(AbstractLearner):
             if epoch_i % eval_freq == 0:
                 val_loss = self.get_mean_model_loss(
                     critic=critic, s_init=s_init,
-                    dl=dl_val, pi_e_name=pi_e_name, sig_inv=sig_inv, u=u,
+                    dl=dl_val, pi_e_name=pi_e_name, s=s, u=u,
+                    eig_threshold=eig_threshold,
                 )
                 if verbose:
                     train_loss = self.get_mean_model_loss(
                         critic=critic, s_init=s_init, dl=dl,
-                        pi_e_name=pi_e_name, sig_inv=sig_inv, u=u,
+                        pi_e_name=pi_e_name, s=s, u=u,
+                        eig_threshold=eig_threshold,
                     )
                     train_beta_loss = self.get_mean_beta_loss(
                         dl=dl, pi_e_name=pi_e_name
@@ -441,8 +445,8 @@ class IterativeSieveLearner(AbstractLearner):
         self.model.eval()
         return best_state
 
-    def train_model_one_epoch(self, model_optim, critic, dl, dl_2, sig_inv, u,
-                              s_init, pi_e_name, alpha_reg):
+    def train_model_one_epoch(self, model_optim, critic, dl, dl_2, s, u,
+                              s_init, pi_e_name, alpha_reg, eig_threshold):
         for batch in dl:
             dl_2_iter = iter(dl_2)
             for batch in dl:
@@ -455,10 +459,12 @@ class IterativeSieveLearner(AbstractLearner):
                     batch=batch_2, critic=critic, s_init=s_init,
                     pi_e_name=pi_e_name, model_grad=True, basis_expansion=True,
                 )
-                rho_f_1 = moments_1.mean(0).view(-1) @ u
-                rho_f_2 = moments_2.mean(0).view(-1) @ u
+                rho_f_1 = moments_1.mean(0).view(-1)
+                rho_f_2 = moments_2.mean(0).view(-1)
                 model_optim.zero_grad()
-                m_loss = (sig_inv * rho_f_1 * rho_f_2).sum()
+                m_loss_1 = (s * (rho_f_1 @ u) * (rho_f_2 @ u)).sum()
+                m_loss_2 = (rho_f_1 @ rho_f_2) * (eig_threshold ** -1)
+                m_loss = m_loss_1 + m_loss_2
                 # m_loss = torch.einsum("xy,x,y->", omega, rho_f_1, rho_f_2)
                 if alpha_reg:
                     m_reg = alpha_reg * self.get_batch_l2_reg_model(
@@ -470,8 +476,8 @@ class IterativeSieveLearner(AbstractLearner):
                 (m_loss + m_reg).backward()
                 model_optim.step()
 
-    def get_mean_model_loss(self, critic, dl, pi_e_name, sig_inv, u, s_init,
-                            batch_scale=1000.0):
+    def get_mean_model_loss(self, critic, dl, pi_e_name, s, u, s_init,
+                            eig_threshold, batch_scale=1000.0):
         self.model.eval()
         rho_f_sum = 0
         batch_size_sum = 0
@@ -486,9 +492,10 @@ class IterativeSieveLearner(AbstractLearner):
             rho_f_sum = rho_f_sum + rho_f.reshape(-1) / batch_scale
             batch_size_sum += len(batch["s"]) / batch_scale
 
-        rho_f_mean = (rho_f_sum / batch_size_sum) @ u
+        rho_f_mean = (rho_f_sum / batch_size_sum)
         # m_loss = torch.einsum("xy,x,y->", omega, rho_f_mean, rho_f_mean)
-        m_loss = (sig_inv * (rho_f_mean ** 2)).sum()
+        m_loss_1 = (s * ((rho_f_mean @ u) ** 2)).sum()
+        m_loss_2 = (rho_f_mean ** 2).sum() * (eig_threshold ** -1)
         # moment_losses = []
         # num_k = len(rho_f_sum) // num_m
         # for i in range(num_m):
@@ -499,7 +506,7 @@ class IterativeSieveLearner(AbstractLearner):
         #     moment_losses.append(loss_i)
         # self.model.train()
         # return m_loss, torch.cat(moment_losses)
-        return m_loss
+        return m_loss_1 + m_loss_2
 
     def train_beta_one_epoch(self, beta_optim, dl, pi_e_name, alpha_reg):
         def closure():
@@ -560,68 +567,135 @@ class IterativeSieveLearner(AbstractLearner):
         self.model.train()
         return f_mat / batch_size_sum
 
+    # def train_next_critic(self, critic, dl, dl_val, pi_e_name, s_init,
+    #                       max_num_epoch, min_num_epoch, max_no_improve,
+    #                       critic_reg_alpha, eval_freq, lr, iter_i,
+    #                       verbose=False):
+    #     self.model.train()
+    #     critic.train()
+    #     critic_optim = Adam(critic.parameters(), lr=lr)
+
+    #     best_val = float("inf")
+    #     num_no_improve = 0
+
+    #     for epoch_i in range(1, max_num_epoch+1):
+    #         for batch in dl:
+    #             moments = self.get_batch_moments(
+    #                 batch=batch, critic=critic, s_init=s_init,
+    #                 pi_e_name=pi_e_name, critic_grad=True,
+    #             )
+    #             obj = moments.mean() - 0.5 * (moments ** 2).mean()
+    #             if critic_reg_alpha:
+    #                 reg_1 = self.get_batch_l2_reg_critic(
+    #                     batch=batch, critic=critic,
+    #                 )
+    #                 reg_2 = critic.get_next_func_batch_reg(
+    #                     batch=batch, train_q_beta=self.train_q_beta,
+    #                     train_eta=self.train_eta, train_w=self.train_w,
+    #                 )
+    #                 reg = critic_reg_alpha * (reg_1 + reg_2)
+    #             else:
+    #                 reg = 0
+    #             loss = (-1.0 * obj + reg)
+
+    #             critic_optim.zero_grad()
+    #             loss.backward()
+    #             critic_optim.step()
+
+    #         if epoch_i % eval_freq == 0:
+    #             val_loss = self.get_mean_critic_loss(
+    #                 critic=critic, dl=dl_val,
+    #                 pi_e_name=pi_e_name, s_init=s_init,
+    #             )
+
+    #             if val_loss < best_val:
+    #                 best_val = val_loss
+    #                 num_no_improve = 0
+    #             else:
+    #                 num_no_improve += 1
+
+    #             if verbose:
+    #                 train_loss = self.get_mean_critic_loss(
+    #                     critic=critic, dl=dl,
+    #                     pi_e_name=pi_e_name, s_init=s_init,
+    #                 )
+    #                 print(f"CRITIC: iter {iter_i}, epoch {epoch_i}")
+    #                 print(f"mean train loss: {train_loss}")
+    #                 print(f"mean val loss: {val_loss}")
+    #                 if num_no_improve == 0:
+    #                     print("NEW BEST")
+    #                 print("")
+
+    #             if (num_no_improve >= max_no_improve
+    #                     and epoch_i >= min_num_epoch):
+    #                 break
+
+    #     self.model.eval()
+    #     critic.eval()
+
+    def critic_lbfgs_closure(self, optim, dl, critic, s_init, pi_e_name,
+                             reg_alpha, batch_scale=1000.0):
+        optim.zero_grad()
+        obj_sum = 0
+        reg_sum = 0
+        batch_size_sum = 0
+
+        for batch in dl:
+            moments = self.get_batch_moments(
+                batch=batch, critic=critic, s_init=s_init,
+                pi_e_name=pi_e_name, critic_grad=True,
+            )
+            obj = moments.sum() - 0.5 * (moments ** 2).sum()
+            if reg_alpha:
+                reg_1 = self.get_batch_l2_reg_critic(
+                    batch=batch, critic=critic,
+                )
+                reg_2 = critic.get_next_func_batch_reg(
+                    batch=batch, train_q_beta=self.train_q_beta,
+                    train_eta=self.train_eta, train_w=self.train_w,
+                )
+                reg = reg_alpha * (reg_1 + reg_2)
+            else:
+                reg = 0
+
+            batch_n = len(batch["s"])
+            obj_sum += obj / batch_scale
+            reg_sum += reg * batch_n / batch_scale
+            batch_size_sum += batch_n / batch_scale
+
+        obj_loss = -1.0 * obj_sum / batch_size_sum
+        reg_loss = reg_sum / batch_size_sum
+        loss = obj_loss + reg_loss
+        loss.backward()
+        return loss
+
     def train_next_critic(self, critic, dl, dl_val, pi_e_name, s_init,
                           max_num_epoch, min_num_epoch, max_no_improve,
                           critic_reg_alpha, eval_freq, lr, iter_i,
                           verbose=False):
         self.model.train()
         critic.train()
-        critic_optim = Adam(critic.parameters(), lr=lr)
+        critic_optim = LBFGS(critic.parameters(),
+                             line_search_fn="strong_wolfe")
+        closure = lambda : self.critic_lbfgs_closure(
+            optim=critic_optim, dl=dl, critic=critic, s_init=s_init,
+            pi_e_name=pi_e_name, reg_alpha=critic_reg_alpha,
+        )
+        critic_optim.step(closure)
 
-        best_val = float("inf")
-        num_no_improve = 0
-
-        for epoch_i in range(1, max_num_epoch+1):
-            for batch in dl:
-                moments = self.get_batch_moments(
-                    batch=batch, critic=critic, s_init=s_init,
-                    pi_e_name=pi_e_name, critic_grad=True,
-                )
-                obj = moments.mean() - 0.5 * (moments ** 2).mean()
-                if critic_reg_alpha:
-                    reg_1 = self.get_batch_l2_reg_critic(
-                        batch=batch, critic=critic,
-                    )
-                    reg_2 = critic.get_next_func_batch_reg(
-                        batch=batch, train_q_beta=self.train_q_beta,
-                        train_eta=self.train_eta, train_w=self.train_w,
-                    )
-                    reg = critic_reg_alpha * (reg_1 + reg_2)
-                else:
-                    reg = 0
-                loss = (-1.0 * obj + reg)
-
-                critic_optim.zero_grad()
-                loss.backward()
-                critic_optim.step()
-
-            if epoch_i % eval_freq == 0:
-                val_loss = self.get_mean_critic_loss(
-                    critic=critic, dl=dl_val,
-                    pi_e_name=pi_e_name, s_init=s_init,
-                )
-
-                if val_loss < best_val:
-                    best_val = val_loss
-                    num_no_improve = 0
-                else:
-                    num_no_improve += 1
-
-                if verbose:
-                    train_loss = self.get_mean_critic_loss(
-                        critic=critic, dl=dl,
-                        pi_e_name=pi_e_name, s_init=s_init,
-                    )
-                    print(f"CRITIC: iter {iter_i}, epoch {epoch_i}")
-                    print(f"mean train loss: {train_loss}")
-                    print(f"mean val loss: {val_loss}")
-                    if num_no_improve == 0:
-                        print("NEW BEST")
-                    print("")
-
-                if (num_no_improve >= max_no_improve
-                        and epoch_i >= min_num_epoch):
-                    break
+        if verbose:
+            val_loss = self.get_mean_critic_loss(
+                critic=critic, dl=dl_val,
+                pi_e_name=pi_e_name, s_init=s_init,
+            )
+            train_loss = self.get_mean_critic_loss(
+                critic=critic, dl=dl,
+                pi_e_name=pi_e_name, s_init=s_init,
+            )
+            print(f"CRITIC: iter {iter_i}")
+            print(f"mean train loss: {train_loss}")
+            print(f"mean val loss: {val_loss}")
+            print("")
 
         self.model.eval()
         critic.eval()

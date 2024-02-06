@@ -7,6 +7,7 @@ from utils.offline_dataset import OfflineRLDataset
 from models.fnn_nuisance_model import FeedForwardNuisanceModel
 from models.fnn_critic import FeedForwardCritic
 from learners.iterative_sieve_critic import IterativeSieveLearner
+from learners.iterative_sieve_critic_simple import IterativeSieveLearnerSimple
 
 def main():
 
@@ -125,7 +126,7 @@ def main():
 
     ## train mdoel on all moments
 
-    learner = IterativeSieveLearner(
+    learner = IterativeSieveLearnerSimple(
         nuisance_model=model, gamma=gamma,
         adversarial_lambda=adversarial_lambda,
         train_q_beta=True, train_eta=False, train_w=False,
