@@ -2,7 +2,7 @@ from copy import deepcopy
 import sys
 
 import torch
-from torch.optim import Adam
+from torch.optim import Adam, LBFGS
 import torch.nn as nn
 import numpy as np
 
@@ -13,7 +13,7 @@ from utils.oadam import OAdam
 
 class SieveCritic(AbstractCritic):
     def __init__(self, prev_net_list, net_class, net_kwargs, init_basis_func,
-                 num_init_basis, init_only=False):
+                 num_init_basis, init_only=False, device=None):
         super().__init__(s_dim=net_kwargs["s_dim"], num_a=net_kwargs["num_a"])
         self.prev_net_list = prev_net_list
         self.net = net_class(**net_kwargs)
@@ -23,9 +23,16 @@ class SieveCritic(AbstractCritic):
         self.init_only = init_only
         num_func = self.get_num_basis_func()
         self.q_linear = nn.Linear(num_func, 1, bias=False)
-        self.beta_linear = nn.Linear(num_func, 1, bias=False)
         self.eta_linear = nn.Linear(num_func, 1, bias=False)
         self.w_linear = nn.Linear(num_func, 1, bias=False)
+        self.device = device
+        self.q_norm = torch.ones(1, num_func)
+        self.eta_norm = torch.ones(1, num_func)
+        self.w_norm = torch.ones(1, num_func)
+        if self.device is not None:
+            self.q_norm = self.q_norm.to(device)
+            self.eta_norm = self.eta_norm.to(device)
+            self.w_norm = self.w_norm.to(device)
 
     def disable_init_only(self):
         self.init_only = False
@@ -64,45 +71,75 @@ class SieveCritic(AbstractCritic):
             reg_sum += (f_w ** 2).mean()
         return reg_sum
 
+    def normalize_critic_model(self, dl, batch_scale=1000.0):
+        num_func = self.get_num_basis_func()
+        self.q_norm = torch.ones(1, num_func)
+        self.eta_norm = torch.ones(1, num_func)
+        self.w_norm = torch.ones(1, num_func)
+        if self.device is not None:
+            self.q_norm = self.q_norm.to(self.device)
+            self.eta_norm = self.eta_norm.to(self.device)
+            self.w_norm = self.w_norm.to(self.device)
+        q_sq_sum = 0
+        eta_sq_sum = 0
+        w_sq_sum = 0
+        batch_size_sum = 0
+        for batch in dl:
+            s = batch["s"]
+            a = batch["a"]
+            q = self.get_q_basis_expansion(s, a) 
+            eta = self.get_eta_basis_expansion(s, a)
+            w = self.get_w_basis_expansion(s)
+            q_sq_sum += (q ** 2).sum(0) / batch_scale
+            eta_sq_sum += (eta ** 2).sum(0) / batch_scale
+            w_sq_sum += (w ** 2).sum(0) / batch_scale
+            batch_size_sum += len(s) / batch_scale
+        q_sq_mean = q_sq_sum / batch_size_sum
+        eta_sq_mean = eta_sq_sum / batch_size_sum
+        w_sq_mean = w_sq_sum / batch_size_sum
+        self.q_norm = (q_sq_mean.unsqueeze(0) + 1e-5) ** -0.5
+        self.eta_norm = (eta_sq_mean.unsqueeze(0) + 1e-5) ** -0.5
+        self.w_norm = (w_sq_mean.unsqueeze(0) + 1e-5) ** -0.5
+
     def get_q_basis_expansion(self, s, a):
         # q_bias = torch.ones(len(s), 1).to(s.device)
         # beta_bias = torch.ones(len(s), 1).to(s.device)
         q_init = self.init_basis_func(s, a)
         if self.init_only:
-            return q_init
+            return q_init * self.q_norm
         else:
             q_new = self.net.get_q(s, a)
             q_list = [q_init, q_new]
             for critic in self.prev_net_list:
                 q = critic.get_q(s, a)
                 q_list.append(q.detach())
-            return torch.cat(q_list, dim=1)
+            return torch.cat(q_list, dim=1) * self.q_norm
 
     def get_eta_basis_expansion(self, s, a):
         # eta_bias = torch.ones(len(s), 1).to(s.device)
         eta_init = self.init_basis_func(s, a)
         if self.init_only:
-            return eta_init
+            return eta_init * self.eta_norm
         else:
             eta_new = self.net.get_eta(s, a)
             eta_list = [eta_init, eta_new]
             for critic in self.prev_net_list:
                 eta = critic.get_eta(s, a)
                 eta_list.append(eta.detach())
-            return torch.cat(eta_list, dim=1)
+            return torch.cat(eta_list, dim=1) * self.eta_norm
 
     def get_w_basis_expansion(self, s):
         # w_bias = torch.ones(len(s), 1).to(s.device)
         w_init = self.init_basis_func(s)
         if self.init_only:
-            return w_init
+            return w_init * self.w_norm
         else:
             w_new = self.net.get_w(s)
             w_list = [w_init, w_new]
             for critic in self.prev_net_list:
                 w = critic.get_w(s)
                 w_list.append(w.detach())
-            return torch.cat(w_list, dim=1)
+            return torch.cat(w_list, dim=1) * self.w_norm
 
     def get_num_basis_func(self):
         if self.init_only:
@@ -127,12 +164,12 @@ class IterativeSieveLearner(AbstractLearner):
 
     def train(self, dataset, pi_e_name, critic_class, critic_kwargs,
               s_init, init_basis_func, num_init_basis,
-              evaluate_pv_kwargs=None, batch_size=1024, gamma_tik=1e-5,
+              evaluate_pv_kwargs=None, batch_size=1024, gamma_tik=1e-2,
               gamma_0=1e-2, total_num_iterations=20, val_frac=0.1, 
               model_max_epoch=50, model_min_epoch=2, 
               model_eval_freq=2, model_max_no_improve=3,
-              model_lr=1e-4, beta_lr=1e-3, model_reg_alpha=1e-6,
-              model_reg_alpha_final=1e-6, critic_reg_alpha=1e-5,
+              model_lr=1e-3, beta_lr=1e-3, model_reg_alpha=1e-5,
+              model_reg_alpha_final=1e-5, critic_reg_alpha=1e-5,
               model_max_epoch_final=500, model_min_epoch_final=50,
               model_eval_freq_final=2, model_max_no_improve_final=5,
               model_lr_final=1e-4, beta_lr_final=1e-3, num_beta_sub_epoch=5,
@@ -149,7 +186,7 @@ class IterativeSieveLearner(AbstractLearner):
         critic = SieveCritic(
             prev_net_list=[], init_only=True, net_class=critic_class,
             net_kwargs=critic_kwargs, init_basis_func=init_basis_func,
-            num_init_basis=num_init_basis,
+            num_init_basis=num_init_basis, device=device
         )
         if device is not None:
             critic.to(device)
@@ -180,7 +217,7 @@ class IterativeSieveLearner(AbstractLearner):
             critic = SieveCritic(
                 prev_net_list=prev_net_list, net_class=critic_class,
                 net_kwargs=critic_kwargs, init_basis_func=init_basis_func,
-                num_init_basis=num_init_basis,
+                num_init_basis=num_init_basis, device=device,
             )
             if device is not None:
                 critic.to(device)
@@ -272,53 +309,73 @@ class IterativeSieveLearner(AbstractLearner):
                      s_init, min_num_epoch, max_no_improve,
                      beta_lr, num_beta_sub_epoch, eval_freq, lr,
                      gamma_0, gamma_tik, iter_i, reg_alpha,
-                     device, verbose=False, eig_threshold=1e-5):
+                     device, verbose=False, eig_threshold=1e-2):
 
         self.model.train()
         # first compute omega "weighting" matrix for loss function
-        num_fail = 0
-        while True:
-            omega_inv = self.get_omega_inv(
-                critic, dl, s_init=s_init, pi_e_name=pi_e_name,
-                gamma_tik=gamma_tik, device=device
-            )
-            num_param = self.get_num_moments() * critic.get_num_basis_func()
-            omega_inv_np = omega_inv.reshape(num_param, num_param).cpu().double().numpy()
-            omega_inv_np = omega_inv_np + gamma_0 * np.eye(num_param)
-            omega_np = np.linalg.inv(omega_inv_np)
-            omega_np = (omega_np + omega_np.T) / 2.0
 
-            # double check that Omega is PD, if not then repeat calculation
-            # with extra regularization
-            min_eig = np.linalg.eigvals(omega_np).real.min()
-            if min_eig < eig_threshold:
-                gamma_0 = gamma_0 * 10.0
-                if verbose:
-                    print(f"WARNING: BAD OMEGA (eig: {min_eig})")
-                    print(f"REPEATING WITH gamma_0={gamma_0}")
-                num_fail += 1
-                if num_fail >= 10:
-                    print("STUCK IN LOOP, ABORTING")
-                    sys.exit(1)
-            else:
-                break
-        omega = torch.FloatTensor(omega_np).to(omega_inv.device)
+        # num_fail = 0
+        # while True:
+        #     omega_inv = self.get_omega_inv(
+        #         critic, dl, s_init=s_init, pi_e_name=pi_e_name,
+        #         gamma_tik=gamma_tik, device=device
+        #     )
+        #     eig_vals, eig_vecs = np.linalg.eig(omega_inv)
+        #     idx = [i_ for i_, v_ in enumerate(eig_vals) if v_ > eig_threshold]
+        #     sig = eig_vals[idx]
+        #     u = eig_vals[idx]
+
+        #     num_param = self.get_num_moments() * critic.get_num_basis_func()
+        #     omega_inv_np = omega_inv.reshape(num_param, num_param).cpu().double().numpy()
+        #     omega_inv_np = omega_inv_np + gamma_0 * np.eye(num_param)
+        #     omega_np = np.linalg.inv(omega_inv_np)
+        #     omega_np = (omega_np + omega_np.T) / 2.0
+
+        #     # double check that Omega is PD, if not then repeat calculation
+        #     # with extra regularization
+        #     min_eig = np.linalg.eigvals(omega_np).real.min()
+        #     if min_eig < eig_threshold:
+        #         gamma_0 = gamma_0 * 10.0
+        #         if verbose:
+        #             print(f"WARNING: BAD OMEGA (eig: {min_eig})")
+        #             print(f"REPEATING WITH gamma_0={gamma_0}")
+        #         num_fail += 1
+        #         if num_fail >= 10:
+        #             print("STUCK IN LOOP, ABORTING")
+        #             sys.exit(1)
+        #     else:
+        #         break
+        # omega = torch.FloatTensor(omega_np).to(omega_inv.device)
+        critic.normalize_critic_model(dl)
+
+        omega_inv = self.get_omega_inv(
+            critic, dl, s_init=s_init, pi_e_name=pi_e_name,
+            gamma_tik=gamma_tik, device=device
+        )
+        num_param = self.get_num_moments() * critic.get_num_basis_func()
+        omega_inv_np = omega_inv.reshape(num_param, num_param).cpu().double().numpy()
+        eig_vals, eig_vecs = np.linalg.eigh(omega_inv_np)
+        idx = [i_ for i_, v_ in enumerate(eig_vals) if v_ > eig_threshold]
+        sig_inv = torch.FloatTensor(eig_vals[idx]).to(omega_inv.device) ** -1
+        u = torch.FloatTensor(eig_vecs[:, idx]).to(omega_inv.device)
+        # print(sorted(eig_vals))
+        # print(sig_inv.shape)
+        # print(u.shape)
 
         # second do SGD on quadratic weighted loss
         model_optim = Adam(self.model.get_parameters(), lr=lr)
-        beta_optim = Adam(self.model.get_beta_parameters(), lr=beta_lr)
         if verbose:
-            init_loss, init_moment_losses = self.get_mean_model_loss(
+            init_loss = self.get_mean_model_loss(
                 critic=critic, s_init=s_init,
-                dl=dl_val, pi_e_name=pi_e_name, omega=omega,
+                dl=dl_val, pi_e_name=pi_e_name, sig_inv=sig_inv, u=u,
             )
             init_beta_loss = self.get_mean_beta_loss(
                 dl=dl_val, pi_e_name=pi_e_name
             )
             print(f"MODEL: iter {iter_i}")
             print(f"Starting val loss: {init_loss},"
-                    f" beta loss: {init_beta_loss}"
-                    f" per moment: {init_moment_losses}")
+                    f" beta loss: {init_beta_loss}")
+                    # f" per moment: {init_moment_losses}")
             print("")
         best_val = float("inf")
         best_state = deepcopy(self.model.get_state())
@@ -327,24 +384,26 @@ class IterativeSieveLearner(AbstractLearner):
         for epoch_i in range(1, max_num_epoch+1):
             self.train_model_one_epoch(
                 model_optim=model_optim, critic=critic, dl=dl, dl_2=dl_2,
-                omega=omega, s_init=s_init, pi_e_name=pi_e_name,
+                sig_inv=sig_inv, u=u, s_init=s_init, pi_e_name=pi_e_name,
                 alpha_reg=reg_alpha,
             )
-            for _ in range(num_beta_sub_epoch):
-                self.train_beta_one_epoch(
-                    beta_optim=beta_optim, dl=dl, pi_e_name=pi_e_name,
-                    alpha_reg=reg_alpha,
-                )
+            # for _ in range(num_beta_sub_epoch):
+            beta_optim = LBFGS(self.model.get_beta_parameters(),
+                            line_search_fn="strong_wolfe")
+            self.train_beta_one_epoch(
+                beta_optim=beta_optim, dl=dl, pi_e_name=pi_e_name,
+                alpha_reg=reg_alpha,
+            )
 
             if epoch_i % eval_freq == 0:
-                val_loss, val_moment_losses = self.get_mean_model_loss(
+                val_loss = self.get_mean_model_loss(
                     critic=critic, s_init=s_init,
-                    dl=dl_val, pi_e_name=pi_e_name, omega=omega,
+                    dl=dl_val, pi_e_name=pi_e_name, sig_inv=sig_inv, u=u,
                 )
                 if verbose:
-                    train_loss, train_moment_losses = self.get_mean_model_loss(
+                    train_loss = self.get_mean_model_loss(
                         critic=critic, s_init=s_init, dl=dl,
-                        pi_e_name=pi_e_name, omega=omega,
+                        pi_e_name=pi_e_name, sig_inv=sig_inv, u=u,
                     )
                     train_beta_loss = self.get_mean_beta_loss(
                         dl=dl, pi_e_name=pi_e_name
@@ -363,11 +422,11 @@ class IterativeSieveLearner(AbstractLearner):
                 if verbose:
                     print(f"MODEL: iter {iter_i}, epoch {epoch_i}")
                     print(f"mean train loss: {train_loss},"
-                          f" beta loss: {train_beta_loss}"
-                          f" per moment: {train_moment_losses}")
+                          f" beta loss: {train_beta_loss}")
+                        #   f" per moment: {train_moment_losses}")
                     print(f"mean val loss: {val_loss},"
-                          f" beta loss: {val_beta_loss}"
-                          f" per moment: {val_moment_losses}")
+                          f" beta loss: {val_beta_loss}")
+                        #   f" per moment: {val_moment_losses}")
                     if num_no_improve == 0:
                         print("NEW BEST")
                     print("")
@@ -382,7 +441,7 @@ class IterativeSieveLearner(AbstractLearner):
         self.model.eval()
         return best_state
 
-    def train_model_one_epoch(self, model_optim, critic, dl, dl_2, omega,
+    def train_model_one_epoch(self, model_optim, critic, dl, dl_2, sig_inv, u,
                               s_init, pi_e_name, alpha_reg):
         for batch in dl:
             dl_2_iter = iter(dl_2)
@@ -396,10 +455,11 @@ class IterativeSieveLearner(AbstractLearner):
                     batch=batch_2, critic=critic, s_init=s_init,
                     pi_e_name=pi_e_name, model_grad=True, basis_expansion=True,
                 )
-                rho_f_1 = moments_1.mean(0).view(-1)
-                rho_f_2 = moments_2.mean(0).view(-1)
+                rho_f_1 = moments_1.mean(0).view(-1) @ u
+                rho_f_2 = moments_2.mean(0).view(-1) @ u
                 model_optim.zero_grad()
-                m_loss = torch.einsum("xy,x,y->", omega, rho_f_1, rho_f_2)
+                m_loss = (sig_inv * rho_f_1 * rho_f_2).sum()
+                # m_loss = torch.einsum("xy,x,y->", omega, rho_f_1, rho_f_2)
                 if alpha_reg:
                     m_reg = alpha_reg * self.get_batch_l2_reg_model(
                         batch=batch, pi_e_name=pi_e_name
@@ -410,13 +470,12 @@ class IterativeSieveLearner(AbstractLearner):
                 (m_loss + m_reg).backward()
                 model_optim.step()
 
-    def get_mean_model_loss(self, critic, dl, pi_e_name, omega, s_init,
+    def get_mean_model_loss(self, critic, dl, pi_e_name, sig_inv, u, s_init,
                             batch_scale=1000.0):
         self.model.eval()
         rho_f_sum = 0
         batch_size_sum = 0
         num_m = self.get_num_moments()
-        moment_rho_f_sums = [0 for _ in range(num_m)]
 
         for batch in dl:
             moments = self.get_batch_moments(
@@ -424,37 +483,39 @@ class IterativeSieveLearner(AbstractLearner):
                 pi_e_name=pi_e_name, basis_expansion=True,
             )
             rho_f = moments.sum(0)
-            rho_f_sum = rho_f_sum + rho_f.view(-1) / batch_scale
-            for i in range(num_m):
-                sum_i = rho_f[:,i] / batch_scale
-                moment_rho_f_sums[i] = moment_rho_f_sums[i] + sum_i
+            rho_f_sum = rho_f_sum + rho_f.reshape(-1) / batch_scale
             batch_size_sum += len(batch["s"]) / batch_scale
 
-        rho_f_mean = rho_f_sum / batch_size_sum
-        m_loss = torch.einsum("xy,x,y->", omega, rho_f_mean, rho_f_mean)
-        moment_losses = []
-        num_k = len(rho_f_sum) // num_m
-        for i in range(num_m):
-            omega_i = omega.reshape(num_k, num_m, num_k, num_m)[:,i,:,i]
-            rho_f_mean_i = moment_rho_f_sums[i] / batch_size_sum
-            loss_i = torch.einsum("xy,x,y->", omega_i, rho_f_mean_i,
-                                  rho_f_mean_i).unsqueeze(0)
-            moment_losses.append(loss_i)
-        self.model.train()
-        return m_loss, torch.cat(moment_losses)
+        rho_f_mean = (rho_f_sum / batch_size_sum) @ u
+        # m_loss = torch.einsum("xy,x,y->", omega, rho_f_mean, rho_f_mean)
+        m_loss = (sig_inv * (rho_f_mean ** 2)).sum()
+        # moment_losses = []
+        # num_k = len(rho_f_sum) // num_m
+        # for i in range(num_m):
+        #     omega_i = omega.reshape(num_k, num_m, num_k, num_m)[:,i,:,i]
+        #     rho_f_mean_i = moment_rho_f_sums[i] / batch_size_sum
+        #     loss_i = torch.einsum("xy,x,y->", omega_i, rho_f_mean_i,
+        #                           rho_f_mean_i).unsqueeze(0)
+        #     moment_losses.append(loss_i)
+        # self.model.train()
+        # return m_loss, torch.cat(moment_losses)
+        return m_loss
 
     def train_beta_one_epoch(self, beta_optim, dl, pi_e_name, alpha_reg):
-        for batch in dl:
-            beta_optim.zero_grad()
-            beta_loss = self.get_batch_quantile_loss(
-                batch=batch, pi_e_name=pi_e_name,
-            )
-            if alpha_reg:
-                beta_reg = alpha_reg * self.get_batch_l2_reg_beta(batch)
-            else:
-                beta_reg = 0
-            (beta_loss + beta_reg).backward()
-            beta_optim.step()
+        def closure():
+            for batch in dl:
+                beta_optim.zero_grad()
+                beta_loss = self.get_batch_quantile_loss(
+                    batch=batch, pi_e_name=pi_e_name,
+                )
+                if alpha_reg:
+                    beta_reg = alpha_reg * self.get_batch_l2_reg_beta(batch)
+                else:
+                    beta_reg = 0
+                loss = beta_loss + beta_reg
+                loss.backward()
+                return loss
+        beta_optim.step(closure)
 
     def get_mean_beta_loss(self, dl, pi_e_name, batch_scale=1000.0):
         self.model.eval()

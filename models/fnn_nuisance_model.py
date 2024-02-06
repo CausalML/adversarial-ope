@@ -36,7 +36,8 @@ class FFNBetaModule(nn.Module):
             layer_sizes=config["beta_layers"],
             dropout_rate=config.get("beta_do", 0.05)
         )
-        self.pos_head = nn.Softplus(beta=0.2)
+        # self.pos_head = nn.Softplus(beta=0.2)
+        self.pos_head = lambda x_: x_.abs()
 
     def forward(self, s, a):
         s_embed = self.s_embed_net(s)
@@ -88,7 +89,8 @@ class FFNuisanceModule(nn.Module):
             layer_sizes=config["w_layers"],
             dropout_rate=config.get("w_do", 0.05)
         )
-        self.pos_head = nn.Softplus(beta=0.2)
+        # self.pos_head = nn.Softplus(beta=0.2)
+        self.pos_head = lambda x_: x_.abs()
 
         self.frozen_embeddings = False
 

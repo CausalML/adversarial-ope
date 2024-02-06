@@ -124,7 +124,7 @@ class ToyEnv(gym.Env):
         ).to(s.device).unsqueeze(0)
         # max_thresholds = min_thresholds + step
         # f_1 = (s >= min_thresholds) * (s <= max_thresholds) * 1.0
-        f_1 = (s >= min_thresholds) * 1.0
+        f_1 = (s <= min_thresholds) * 1.0
         f_2 = F.one_hot(a, num_classes=2)
         bias = torch.ones_like(s)
         f = (f_1.unsqueeze(1) * f_2.unsqueeze(2)).reshape(len(s), -1)
