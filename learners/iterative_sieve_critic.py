@@ -154,27 +154,27 @@ class SieveCritic(AbstractCritic):
 class IterativeSieveLearner(AbstractLearner):
     def __init__(self, nuisance_model, gamma, adversarial_lambda,
                  train_q_beta=True, train_eta=True, train_w=True,
-                 use_dual_cvar=True, worst_case=True):
+                 use_dual_cvar=True, worst_case=True, debug_beta=False):
         super().__init__(
             nuisance_model=nuisance_model, gamma=gamma,
             adversarial_lambda=adversarial_lambda, worst_case=worst_case,
             train_q_beta=train_q_beta, train_eta=train_eta, train_w=train_w,
             use_dual_cvar=use_dual_cvar,
         )
+        self.debug_beta = debug_beta
 
     def train(self, dataset, pi_e_name, critic_class, critic_kwargs,
               s_init, init_basis_func, num_init_basis,
               evaluate_pv_kwargs=None, batch_size=1024, gamma_tik=1e-2,
-              gamma_0=1e-2, total_num_iterations=20, val_frac=0.1, 
+              total_num_iterations=20, val_frac=0.1, 
               model_max_epoch=50, model_min_epoch=2, 
               model_eval_freq=2, model_max_no_improve=3,
-              model_lr=1e-3, beta_lr=1e-3, model_reg_alpha=1e-5,
+              model_lr=1e-4, model_reg_alpha=1e-5,
               model_reg_alpha_final=1e-5, critic_reg_alpha=1e-5,
               model_max_epoch_final=500, model_min_epoch_final=50,
               model_eval_freq_final=2, model_max_no_improve_final=5,
-              model_lr_final=1e-4, beta_lr_final=1e-3, num_beta_sub_epoch=5,
-              critic_max_epoch=100, critic_min_epoch=4,
-              critic_eval_freq=4, critic_max_no_improve=2,
+              model_lr_final=1e-4, critic_max_epoch=100, critic_min_epoch=4,
+              eig_threshold=1e-4, critic_eval_freq=4, critic_max_no_improve=2,
               critic_lr=5e-3, verbose=False, device=None):
 
         train_data, val_data = dataset.get_train_dev_split(val_frac)
@@ -197,12 +197,10 @@ class IterativeSieveLearner(AbstractLearner):
             # do a training update on model
             self.update_model(
                 critic=critic, dl=dl, dl_2=dl_2, dl_val=dl_val,
-                s_init=s_init, pi_e_name=pi_e_name, gamma_0=gamma_0,
-                gamma_tik=gamma_tik, min_num_epoch=model_min_epoch,
-                max_num_epoch=model_max_epoch, beta_lr=beta_lr,
-                num_beta_sub_epoch=num_beta_sub_epoch,
+                s_init=s_init, pi_e_name=pi_e_name, gamma_tik=gamma_tik,
+                min_num_epoch=model_min_epoch, max_num_epoch=model_max_epoch, 
                 max_no_improve=model_max_no_improve,
-                eval_freq=model_eval_freq, 
+                eval_freq=model_eval_freq, eig_threshold=eig_threshold,
                 reg_alpha=model_reg_alpha, iter_i=iter_i, lr=model_lr,
                 verbose=verbose, device=device,
             )
@@ -235,13 +233,12 @@ class IterativeSieveLearner(AbstractLearner):
         # do a final round of training on model
         best_state = self.update_model(
             critic=critic, dl=dl, dl_2=dl_2, dl_val=dl_val,
-            s_init=s_init, pi_e_name=pi_e_name, gamma_0=gamma_0,
+            s_init=s_init, pi_e_name=pi_e_name,
             gamma_tik=gamma_tik, min_num_epoch=model_min_epoch_final,
             max_num_epoch=model_max_epoch_final,
             max_no_improve=model_max_no_improve_final,
             eval_freq=model_eval_freq_final,
-            reg_alpha=model_reg_alpha_final, beta_lr=beta_lr_final,
-            num_beta_sub_epoch=num_beta_sub_epoch,
+            reg_alpha=model_reg_alpha_final, eig_threshold=eig_threshold,
             iter_i="FINAL", lr=model_lr_final, verbose=verbose, device=device,
         )
         self.model.set_state(best_state)
@@ -307,9 +304,8 @@ class IterativeSieveLearner(AbstractLearner):
 
     def update_model(self, critic, dl, dl_2, dl_val, pi_e_name, max_num_epoch,
                      s_init, min_num_epoch, max_no_improve,
-                     beta_lr, num_beta_sub_epoch, eval_freq, lr,
-                     gamma_0, gamma_tik, iter_i, reg_alpha,
-                     device, verbose=False, eig_threshold=1e-3):
+                     eval_freq, lr, gamma_tik, iter_i, reg_alpha,
+                     device, verbose=False, eig_threshold=1e-4):
 
         self.model.train()
         # first compute omega "weighting" matrix for loss function
@@ -389,13 +385,14 @@ class IterativeSieveLearner(AbstractLearner):
                 s=s, u=u, s_init=s_init, pi_e_name=pi_e_name,
                 alpha_reg=reg_alpha, eig_threshold=eig_threshold,
             )
-            # for _ in range(num_beta_sub_epoch):
-            beta_optim = LBFGS(self.model.get_beta_parameters(),
-                            line_search_fn="strong_wolfe")
-            self.train_beta_one_epoch(
-                beta_optim=beta_optim, dl=dl, pi_e_name=pi_e_name,
-                alpha_reg=reg_alpha,
-            )
+            if self.train_q_beta:
+                # for _ in range(num_beta_sub_epoch):
+                beta_optim = LBFGS(self.model.get_beta_parameters(),
+                                line_search_fn="strong_wolfe")
+                self.train_beta_one_epoch(
+                    beta_optim=beta_optim, dl=dl, pi_e_name=pi_e_name,
+                    alpha_reg=reg_alpha,
+                )
 
             if epoch_i % eval_freq == 0:
                 val_loss = self.get_mean_model_loss(
@@ -409,12 +406,13 @@ class IterativeSieveLearner(AbstractLearner):
                         pi_e_name=pi_e_name, s=s, u=u,
                         eig_threshold=eig_threshold,
                     )
-                    train_beta_loss = self.get_mean_beta_loss(
-                        dl=dl, pi_e_name=pi_e_name
-                    ) 
-                    val_beta_loss = self.get_mean_beta_loss(
-                        dl=dl_val, pi_e_name=pi_e_name
-                    ) 
+                    if self.train_q_beta:
+                        train_beta_loss = self.get_mean_beta_loss(
+                            dl=dl, pi_e_name=pi_e_name
+                        ) 
+                        val_beta_loss = self.get_mean_beta_loss(
+                            dl=dl_val, pi_e_name=pi_e_name
+                        ) 
 
                 if val_loss < best_val:
                     best_val = val_loss
@@ -424,13 +422,17 @@ class IterativeSieveLearner(AbstractLearner):
                     num_no_improve += 1
 
                 if verbose:
-                    print(f"MODEL: iter {iter_i}, epoch {epoch_i}")
-                    print(f"mean train loss: {train_loss},"
-                          f" beta loss: {train_beta_loss}")
-                        #   f" per moment: {train_moment_losses}")
-                    print(f"mean val loss: {val_loss},"
-                          f" beta loss: {val_beta_loss}")
-                        #   f" per moment: {val_moment_losses}")
+                    train_msg = f"mean train loss: {train_loss}"
+                    val_msg = f"mean val loss: {val_loss}"
+                    if self.train_q_beta:
+                        train_msg += f", beta loss: {train_beta_loss}"
+                        val_msg += f" beta loss: {val_beta_loss}"
+                    print(train_msg)
+                    print(val_msg)
+                    if self.debug_beta:
+                        self.print_eta_error_info(
+                            dl=dl_val, critic=critic, pi_e_name=pi_e_name
+                        )
                     if num_no_improve == 0:
                         print("NEW BEST")
                     print("")
@@ -508,10 +510,13 @@ class IterativeSieveLearner(AbstractLearner):
         # return m_loss, torch.cat(moment_losses)
         return m_loss_1 + m_loss_2
 
-    def train_beta_one_epoch(self, beta_optim, dl, pi_e_name, alpha_reg):
+    def train_beta_one_epoch(self, beta_optim, dl, pi_e_name, alpha_reg,
+                             batch_scale=1000.0):
         def closure():
+            beta_optim.zero_grad()
+            loss_sum = 0
+            batch_sum = 0
             for batch in dl:
-                beta_optim.zero_grad()
                 beta_loss = self.get_batch_quantile_loss(
                     batch=batch, pi_e_name=pi_e_name,
                 )
@@ -520,8 +525,12 @@ class IterativeSieveLearner(AbstractLearner):
                 else:
                     beta_reg = 0
                 loss = beta_loss + beta_reg
-                loss.backward()
-                return loss
+                loss_sum += loss * len(batch["s"]) / batch_scale
+                batch_sum += len(batch["s"]) / batch_scale
+            total_loss = loss_sum / batch_sum
+            total_loss.backward()
+            return total_loss
+
         beta_optim.step(closure)
 
     def get_mean_beta_loss(self, dl, pi_e_name, batch_scale=1000.0):

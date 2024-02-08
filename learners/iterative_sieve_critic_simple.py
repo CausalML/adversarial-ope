@@ -73,7 +73,7 @@ class IterativeSieveLearnerSimple(IterativeSieveLearner):
         critic.train()
         critic_optim = LBFGS(critic.parameters(),
                              line_search_fn="strong_wolfe")
-        closure = lambda : self.critic_lbfgs_closure(
+        closure = lambda : self.critic_lbfgs_closure_simple(
             optim=critic_optim, dl=dl, critic=critic, s_init=s_init,
             pi_e_name=pi_e_name, reg_alpha=critic_reg_alpha,
         )

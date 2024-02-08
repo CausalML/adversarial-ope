@@ -15,6 +15,7 @@ class OfflineRLDataset(Dataset):
         self.r = torch.FloatTensor([])
         self.pi_s = {}
         self.pi_ss = {}
+        self.pi_b_a_probs = None
 
     def sample_new_trajectory(self, env, pi, burn_in, num_sample, thin=1):
         assert isinstance(pi, AbstractPolicy)
@@ -52,11 +53,17 @@ class OfflineRLDataset(Dataset):
     def apply_eval_policy(self, pi_eval_name, pi_eval):
         assert pi_eval_name not in self.pi_ss
 
-        pi_s_list = [pi_eval(s_.numpy()) for s_ in self.s]
+        pi_s_list = [pi_eval(s_.cpu().numpy()) for s_ in self.s]
         self.pi_s[pi_eval_name] = torch.LongTensor(pi_s_list)
 
-        pi_ss_list = [pi_eval(ss_.numpy()) for ss_ in self.ss]
+        pi_ss_list = [pi_eval(ss_.cpu().numpy()) for ss_ in self.ss]
         self.pi_ss[pi_eval_name] = torch.LongTensor(pi_ss_list)
+
+    def compute_pi_b_probs(self, pi_b_base, epsilon):
+        base_a = torch.LongTensor([pi_b_base(s_.cpu().numpy()) for s_ in self.s])
+        base_a = base_a.to(self.a.device)
+        num_a = len(set([int(a_) for a_ in self.a]))
+        self.pi_b_a_probs = epsilon / num_a + (1 - epsilon) * (self.a == base_a)
 
     def __len__(self):
         return len(self.s)
@@ -72,6 +79,8 @@ class OfflineRLDataset(Dataset):
             x[f"pi_ss::{pi_eval_name}"] = pi_ss[i]
             pi_s = self.pi_s[pi_eval_name]
             x[f"pi_s::{pi_eval_name}"] = pi_s[i]
+        if self.pi_b_a_probs is not None:
+            x["pi_b_probs"] = self.pi_b_a_probs[i]
         return x
 
     def get_train_dev_split(self, dev_frac):
@@ -92,6 +101,8 @@ class OfflineRLDataset(Dataset):
             pi_s = self.pi_s[pi_name]
             split.pi_s[pi_name] = pi_s[start_i:end_i]
             split.pi_ss[pi_name] = pi_ss[start_i:end_i]
+        if self.pi_b_a_probs is not None:
+            split.pi_b_a_probs = self.pi_b_a_probs[start_i:end_i]
         return split
 
     def save_dataset(self, save_dir):
@@ -108,6 +119,9 @@ class OfflineRLDataset(Dataset):
             pi_s = self.pi_s[pi_name]
             torch.save(pi_s, os.path.join(save_dir, f"{pi_name}__pi_s.pt"))
             torch.save(pi_ss, os.path.join(save_dir, f"{pi_name}__pi_ss.pt"))
+        if self.pi_b_a_probs is not None:
+            pi_b_a_path = os.path.join(save_dir, "pi_b_a_probs.pt")
+            torch.save(self.pi_b_a_probs, pi_b_a_path)
 
     @staticmethod
     def load_dataset(load_dir):
@@ -123,6 +137,9 @@ class OfflineRLDataset(Dataset):
             pi_ss_path = os.path.join(load_dir, f"{pi_name}__pi_ss.pt")
             dataset.pi_s[pi_name] = torch.load(pi_s_path)
             dataset.pi_ss[pi_name] = torch.load(pi_ss_path)
+        pi_b_a_path = os.path.join(load_dir, "pi_b_a_probs.pt")
+        if os.path.exists(pi_b_a_path):
+            dataset.pi_b_a_probs = torch.load(pi_b_a_path)
         return dataset
 
     def to(self, device):
@@ -135,3 +152,5 @@ class OfflineRLDataset(Dataset):
         for pi_name in self.pi_s.keys():
             self.pi_s[pi_name] = self.pi_s[pi_name].to(device)
             self.pi_ss[pi_name] = self.pi_ss[pi_name].to(device)
+        if self.pi_b_a_probs is not None:
+            self.pi_b_a_probs = self.pi_b_a_probs.to(device)

@@ -239,6 +239,37 @@ class AbstractLearner(ABC):
         return (self.gamma * w * (eta * lambda_is) * f_ss
                 - f_s * w + (1 - self.gamma) * f_s0)
 
+    def print_eta_error_info(self, dl, critic, pi_e_name, batch_scale=1000.0):
+        est_err_sum = 0.0
+        true_err_sum = 0.0
+        eta_err_sum = 0.0
+        batch_size_sum = 0
+
+        for batch in dl:
+            s = batch["s"]
+            a = batch["a"]
+            ss = batch["ss"]
+            pi_s = batch[f"pi_s::{pi_e_name}"]
+            pi_b_probs = batch["pi_b_probs"].reshape(-1, 1)
+            pi_e_match = (pi_s == a).reshape(-1, 1) * 1.0
+
+            f_eta_s_a = critic.get_eta_basis_expansion(s, a)
+            f_eta_s_pi = critic.get_eta_basis_expansion(s, pi_s)
+            eta = self.model.get_eta(s, a) * pi_e_match
+            true_eta = pi_e_match / pi_b_probs
+
+            est_err_sum += (f_eta_s_a * eta - f_eta_s_pi).sum(0) / batch_scale
+            true_err_sum += (f_eta_s_a * true_eta - f_eta_s_pi).sum(0) / batch_scale
+            eta_err_sum += ((eta - true_eta) ** 2).sum() / batch_scale
+            batch_size_sum += len(batch["s"]) / batch_scale
+
+        est_err = est_err_sum / batch_size_sum
+        true_err = true_err_sum / batch_size_sum
+        eta_err = eta_err_sum / batch_size_sum
+        print(f"max moment error with estimated eta: {est_err.abs().max()}")
+        print(f"max moment error with true eta: {true_err.abs().max()}")
+        print(f"L2 error of estimated eta: {eta_err}")
+
     @abstractmethod
     def train(self, dataset, pi_e_name):
         pass

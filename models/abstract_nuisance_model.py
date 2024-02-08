@@ -7,7 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-STATE_FILE_NAME = "state.pt"
+MODEL_STATE_FILE_NAME = "model_state.pt"
+BETA_STATE_FILE_NAME = "beta_state.pt"
 KWARGS_FILE_NAME = "init_kwargs.json"
 
 
@@ -46,38 +47,60 @@ class AbstractNuisanceModel(ABC):
         pass
 
     @abstractmethod
-    def get_state(self):
+    def get_beta_parameters(self):
         pass
 
     @abstractmethod
-    def set_state(self, state):
+    def get_model_state(self):
+        pass
+
+    @abstractmethod
+    def get_beta_state(self):
+        pass
+
+    @abstractmethod
+    def set_model_state(self, state):
+        pass
+
+    @abstractmethod
+    def set_beta_state(self, state):
         pass
 
     @abstractmethod
     def get_init_kwargs(self):
         pass
 
+    def get_state(self):
+        return self.get_model_state(), self.get_beta_state()
+
+    def set_state(self, state):
+        model_state, beta_state = state
+        self.set_model_state(model_state)
+        self.set_beta_state(beta_state)
+
     @classmethod
     def load_model(cls, load_path):
         with open(os.path.join(load_path, KWARGS_FILE_NAME)) as f:
             init_kwargs = json.load(f)
         model = cls(**init_kwargs)
-        state = torch.load(os.path.join(load_path, STATE_FILE_NAME))
+        model_state = torch.load(os.path.join(load_path, MODEL_STATE_FILE_NAME))
+        beta_state = torch.load(os.path.join(load_path, BETA_STATE_FILE_NAME))
+        state = model_state, beta_state
         model.set_state(state)
         return model
 
     def save_model(self, save_dir):
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        state = self.get_state()
-        state_path = os.path.join(save_dir, STATE_FILE_NAME)
-        torch.save(state, state_path)
+        model_state, beta_state = self.get_state()
+        model_state_path = os.path.join(save_dir, MODEL_STATE_FILE_NAME)
+        beta_state_path = os.path.join(save_dir, BETA_STATE_FILE_NAME)
+        torch.save(model_state, model_state_path)
+        torch.save(beta_state, beta_state_path)
         init_kwargs = self.get_init_kwargs()
         init_kwargs_path = os.path.join(save_dir, KWARGS_FILE_NAME)
         with open(init_kwargs_path, "w") as f:
             json.dump(init_kwargs, f, indent=2)
-
-        return 
 
     def estimate_policy_val_q(self, s_init, a_init, gamma):
         q = self.get_q(s_init.unsqueeze(0), a_init)
