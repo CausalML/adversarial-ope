@@ -166,7 +166,7 @@ class IterativeSieveLearner(AbstractLearner):
     def train(self, dataset, pi_e_name, critic_class, critic_kwargs,
               s_init, init_basis_func, num_init_basis,
               evaluate_pv_kwargs=None, batch_size=1024, gamma_tik=1e-2,
-              total_num_iterations=20, val_frac=0.1, 
+              total_num_iterations=20, val_frac=0.1, alpha_w=1e0,
               model_max_epoch=50, model_min_epoch=2, 
               model_eval_freq=2, model_max_no_improve=3,
               model_lr=1e-4, model_reg_alpha=1e-5,
@@ -202,7 +202,7 @@ class IterativeSieveLearner(AbstractLearner):
                 max_no_improve=model_max_no_improve,
                 eval_freq=model_eval_freq, eig_threshold=eig_threshold,
                 reg_alpha=model_reg_alpha, iter_i=iter_i, lr=model_lr,
-                verbose=verbose, device=device,
+                alpha_w=alpha_w, verbose=verbose, device=device,
             )
             if verbose and (evaluate_pv_kwargs is not None):
                 self.print_policy_value_estimates(**evaluate_pv_kwargs)
@@ -237,7 +237,7 @@ class IterativeSieveLearner(AbstractLearner):
             gamma_tik=gamma_tik, min_num_epoch=model_min_epoch_final,
             max_num_epoch=model_max_epoch_final,
             max_no_improve=model_max_no_improve_final,
-            eval_freq=model_eval_freq_final,
+            eval_freq=model_eval_freq_final, alpha_w=alpha_w,
             reg_alpha=model_reg_alpha_final, eig_threshold=eig_threshold,
             iter_i="FINAL", lr=model_lr_final, verbose=verbose, device=device,
         )
@@ -303,8 +303,8 @@ class IterativeSieveLearner(AbstractLearner):
         print("")
 
     def update_model(self, critic, dl, dl_2, dl_val, pi_e_name, max_num_epoch,
-                     s_init, min_num_epoch, max_no_improve,
-                     eval_freq, lr, gamma_tik, iter_i, reg_alpha,
+                     s_init, min_num_epoch, max_no_improve, eval_freq, lr,
+                     gamma_tik, iter_i, reg_alpha, alpha_w,
                      device, verbose=False, eig_threshold=1e-4):
 
         self.model.train()
@@ -353,7 +353,7 @@ class IterativeSieveLearner(AbstractLearner):
         eig_vals, eig_vecs = np.linalg.eigh(omega_inv_np)
         idx = [i_ for i_, v_ in enumerate(eig_vals) if v_ > eig_threshold]
         sig_inv = torch.FloatTensor(eig_vals[idx]).to(omega_inv.device) ** -1
-        s = sig_inv - (eig_threshold ** -1)
+        omega = sig_inv * eig_threshold - 1.0
         u = torch.FloatTensor(eig_vecs[:, idx]).to(omega_inv.device)
         # print(sorted(eig_vals))
         # print(sig_inv.shape)
@@ -364,16 +364,17 @@ class IterativeSieveLearner(AbstractLearner):
         if verbose:
             init_loss = self.get_mean_model_loss(
                 critic=critic, s_init=s_init,
-                dl=dl_val, pi_e_name=pi_e_name, s=s, u=u,
+                dl=dl_val, pi_e_name=pi_e_name, omega=omega, u=u,
                 eig_threshold=eig_threshold,
             )
             init_beta_loss = self.get_mean_beta_loss(
                 dl=dl_val, pi_e_name=pi_e_name
             )
             print(f"MODEL: iter {iter_i}")
-            print(f"Starting val loss: {init_loss},"
-                    f" beta loss: {init_beta_loss}")
-                    # f" per moment: {init_moment_losses}")
+            msg = f"Starting val loss: {init_loss}"
+            if self.train_q_beta:
+                msg += f", beta loss: {init_beta_loss}"
+            print(msg)
             print("")
         best_val = float("inf")
         best_state = deepcopy(self.model.get_state())
@@ -382,8 +383,9 @@ class IterativeSieveLearner(AbstractLearner):
         for epoch_i in range(1, max_num_epoch+1):
             self.train_model_one_epoch(
                 model_optim=model_optim, critic=critic, dl=dl, dl_2=dl_2,
-                s=s, u=u, s_init=s_init, pi_e_name=pi_e_name,
+                omega=omega, u=u, s_init=s_init, pi_e_name=pi_e_name,
                 alpha_reg=reg_alpha, eig_threshold=eig_threshold,
+                alpha_w=alpha_w,
             )
             if self.train_q_beta:
                 # for _ in range(num_beta_sub_epoch):
@@ -391,19 +393,19 @@ class IterativeSieveLearner(AbstractLearner):
                                 line_search_fn="strong_wolfe")
                 self.train_beta_one_epoch(
                     beta_optim=beta_optim, dl=dl, pi_e_name=pi_e_name,
-                    alpha_reg=reg_alpha,
+                    alpha_reg=reg_alpha, 
                 )
 
             if epoch_i % eval_freq == 0:
                 val_loss = self.get_mean_model_loss(
                     critic=critic, s_init=s_init,
-                    dl=dl_val, pi_e_name=pi_e_name, s=s, u=u,
+                    dl=dl_val, pi_e_name=pi_e_name, omega=omega, u=u,
                     eig_threshold=eig_threshold,
                 )
                 if verbose:
                     train_loss = self.get_mean_model_loss(
                         critic=critic, s_init=s_init, dl=dl,
-                        pi_e_name=pi_e_name, s=s, u=u,
+                        pi_e_name=pi_e_name, omega=omega, u=u,
                         eig_threshold=eig_threshold,
                     )
                     if self.train_q_beta:
@@ -422,6 +424,7 @@ class IterativeSieveLearner(AbstractLearner):
                     num_no_improve += 1
 
                 if verbose:
+                    print(f"iteration {iter_i}, epoch {epoch_i}")
                     train_msg = f"mean train loss: {train_loss}"
                     val_msg = f"mean val loss: {val_loss}"
                     if self.train_q_beta:
@@ -441,14 +444,15 @@ class IterativeSieveLearner(AbstractLearner):
                         and epoch_i >= min_num_epoch):
                     break
 
-        # print("LOADING BEST PARAMS")
-        # self.model.set_state(best_state)
-        # print("")
+        print("LOADING BEST PARAMS")
+        self.model.set_state(best_state)
+        print("")
         self.model.eval()
         return best_state
 
-    def train_model_one_epoch(self, model_optim, critic, dl, dl_2, s, u,
-                              s_init, pi_e_name, alpha_reg, eig_threshold):
+    def train_model_one_epoch(self, model_optim, critic, dl, dl_2, omega, u,
+                              s_init, pi_e_name, alpha_reg, eig_threshold,
+                              alpha_w):
         for batch in dl:
             dl_2_iter = iter(dl_2)
             for batch in dl:
@@ -464,9 +468,9 @@ class IterativeSieveLearner(AbstractLearner):
                 rho_f_1 = moments_1.mean(0).view(-1)
                 rho_f_2 = moments_2.mean(0).view(-1)
                 model_optim.zero_grad()
-                m_loss_1 = (s * (rho_f_1 @ u) * (rho_f_2 @ u)).sum()
-                m_loss_2 = (rho_f_1 @ rho_f_2) * (eig_threshold ** -1)
-                m_loss = m_loss_1 + m_loss_2
+                m_loss_1 = (omega * (rho_f_1 @ u) * (rho_f_2 @ u)).sum()
+                m_loss_2 = (rho_f_1 @ rho_f_2) 
+                m_loss = (m_loss_1 + m_loss_2) * eig_threshold ** -1
                 # m_loss = torch.einsum("xy,x,y->", omega, rho_f_1, rho_f_2)
                 if alpha_reg:
                     m_reg = alpha_reg * self.get_batch_l2_reg_model(
@@ -475,10 +479,15 @@ class IterativeSieveLearner(AbstractLearner):
                 else:
                     m_reg = 0
 
+                if self.train_w:
+                    s = batch["s"]
+                    w = self.model.get_w(s)
+                    m_reg = m_reg + alpha_w * (w - 1.0).mean() ** 2
+
                 (m_loss + m_reg).backward()
                 model_optim.step()
 
-    def get_mean_model_loss(self, critic, dl, pi_e_name, s, u, s_init,
+    def get_mean_model_loss(self, critic, dl, pi_e_name, omega, u, s_init,
                             eig_threshold, batch_scale=1000.0):
         self.model.eval()
         rho_f_sum = 0
@@ -496,8 +505,8 @@ class IterativeSieveLearner(AbstractLearner):
 
         rho_f_mean = (rho_f_sum / batch_size_sum)
         # m_loss = torch.einsum("xy,x,y->", omega, rho_f_mean, rho_f_mean)
-        m_loss_1 = (s * ((rho_f_mean @ u) ** 2)).sum()
-        m_loss_2 = (rho_f_mean ** 2).sum() * (eig_threshold ** -1)
+        m_loss_1 = (omega * ((rho_f_mean @ u) ** 2)).sum()
+        m_loss_2 = (rho_f_mean ** 2).sum() 
         # moment_losses = []
         # num_k = len(rho_f_sum) // num_m
         # for i in range(num_m):
@@ -508,7 +517,7 @@ class IterativeSieveLearner(AbstractLearner):
         #     moment_losses.append(loss_i)
         # self.model.train()
         # return m_loss, torch.cat(moment_losses)
-        return m_loss_1 + m_loss_2
+        return (m_loss_1 + m_loss_2) * (eig_threshold ** -1)
 
     def train_beta_one_epoch(self, beta_optim, dl, pi_e_name, alpha_reg,
                              batch_scale=1000.0):

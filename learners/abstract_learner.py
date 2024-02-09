@@ -213,9 +213,9 @@ class AbstractLearner(ABC):
             w_ss = w_ss.detach()
             eta = eta.detach()
             xi = xi.detach()
-        elif not self.train_q_beta:
+        if not self.train_q_beta:
             xi = xi.detach()
-        elif not self.train_eta:
+        if not self.train_eta:
             eta = eta.detach()
 
         if basis_expansion:
@@ -237,7 +237,7 @@ class AbstractLearner(ABC):
         # return (self.gamma * w * (eta * lambda_is).detach() * f_ss
         #         - lambda_is.detach() * f_ss * w_ss + (1 - self.gamma) * f_s0)
         return (self.gamma * w * (eta * lambda_is) * f_ss
-                - f_s * w + (1 - self.gamma) * f_s0)
+                - f_ss * w_ss + (1 - self.gamma) * f_s0)
 
     def print_eta_error_info(self, dl, critic, pi_e_name, batch_scale=1000.0):
         est_err_sum = 0.0
