@@ -444,9 +444,10 @@ class IterativeSieveLearner(AbstractLearner):
                         and epoch_i >= min_num_epoch):
                     break
 
-        print("LOADING BEST PARAMS")
+        if verbose:
+            print("LOADING BEST PARAMS")
+            print("")
         self.model.set_state(best_state)
-        print("")
         self.model.eval()
         return best_state
 

@@ -16,18 +16,16 @@ from learners.iterative_sieve_critic import IterativeSieveLearner
 
 
 def main(config, results_path):
-    num_rep = config["num_rep"]
+    num_rep_range = config["num_rep_range"]
     lambda_range = config["adversarial_lambda_values"]
-    num_restart = config["num_restart"]
+    num_restart_range = config["num_restart_range"]
     job_queue = Queue()
     num_jobs = 0
-    job_iter = product(range(num_rep), range(num_restart), lambda_range,
-                       (True, False), (True, False))
+    job_iter = product(num_rep_range, num_restart_range, lambda_range)
 
-    for rep_i, restart_i, lmbda, dual_cvar, sequential in job_iter:
+    for rep_i, restart_i, lmbda in job_iter:
         job = {"rep_i": rep_i, "adversarial_lambda": lmbda,
-               "restart_i": restart_i, "dual_cvar": dual_cvar,
-               "sequential": sequential}
+               "restart_i": restart_i}
         job_queue.put(job)
         num_jobs += 1
 
@@ -57,8 +55,7 @@ def run_jobs_loop(job_queue, results_queue, config, device):
         results = single_run(config=config, device=device, **job_kwargs)
         results_queue.put(results)
 
-def single_run(config, rep_i, restart_i,
-               adversarial_lambda, dual_cvar, sequential, device=None):
+def single_run(config, rep_i, restart_i, adversarial_lambda, device=None):
 
 
     env = ToyEnv(s_init=config["s_threshold"], adversarial=False)
@@ -92,19 +89,12 @@ def single_run(config, rep_i, restart_i,
         train_dataset.to(device)
         test_dataset.to(device)
 
-    if sequential:
-        learner = IterativeSieveLearner(
-            nuisance_model=model, gamma=gamma, use_dual_cvar=dual_cvar,
-            adversarial_lambda=adversarial_lambda,
-            train_q_xi=True, train_eta=False, train_w=False,
-        )
-    else:
-        learner = IterativeSieveLearner(
-            nuisance_model=model, gamma=gamma, use_dual_cvar=dual_cvar,
-            adversarial_lambda=adversarial_lambda,
-            train_q_xi=True, train_eta=True, train_w=True,
-        )
-
+    # first train q/beta
+    q_learner = IterativeSieveLearner(
+        nuisance_model=model, gamma=gamma, use_dual_cvar=True,
+        adversarial_lambda=adversarial_lambda,
+        train_q_beta=True, train_eta=False, train_w=False, debug_beta=False,
+    )
     s_init, a_init = env.get_s_a_init(pi_e)
     if device is not None:
         s_init = s_init.to(device)
@@ -115,35 +105,48 @@ def single_run(config, rep_i, restart_i,
         "s_init": s_init, "a_init": a_init,
         "dl_test": dl_test, "pi_e_name": pi_e_name,
     }
-    learner_kwargs = config["learner_kwargs"]
-    learner.train(
+    q_learner_kwargs = config["q_learner_kwargs"]
+    q_learner.train(
         dataset=train_dataset, pi_e_name=pi_e_name, verbose=False,
         device=device, init_basis_func=env.bias_basis_func,
         num_init_basis=1, evaluate_pv_kwargs=evaluate_pv_kwargs,
         critic_class=critic_class, s_init=s_init,
-        critic_kwargs=critic_kwargs, **learner_kwargs,
+        critic_kwargs=critic_kwargs, **q_learner_kwargs,
     )
 
-    if sequential:
-        #do a second training on eta / w moments
-        learner_2 = IterativeSieveLearner(
-            nuisance_model=model, gamma=gamma, use_dual_cvar=dual_cvar,
-            adversarial_lambda=adversarial_lambda,
-            train_q_xi=False, train_eta=True, train_w=True,
-        )
-        learner_2.train(
-            dataset=train_dataset, pi_e_name=pi_e_name, verbose=False,
-            device=device, init_basis_func=env.bias_basis_func,
-            num_init_basis=1, evaluate_pv_kwargs=evaluate_pv_kwargs,
-            critic_class=critic_class, s_init=s_init,
-            critic_kwargs=critic_kwargs, **learner_kwargs,
-        )
+    # second train eta
+    eta_learner = IterativeSieveLearner(
+        nuisance_model=model, gamma=gamma, use_dual_cvar=True,
+        adversarial_lambda=adversarial_lambda,
+        train_q_beta=False, train_eta=True, train_w=False, debug_beta=False,
+    )
+    eta_learner_kwargs = config["eta_learner_kwargs"]
+    eta_learner.train(
+        dataset=train_dataset, pi_e_name=pi_e_name, verbose=False,
+        device=device, init_basis_func=env.bias_basis_func,
+        num_init_basis=1, evaluate_pv_kwargs=evaluate_pv_kwargs,
+        critic_class=critic_class, s_init=s_init,
+        critic_kwargs=critic_kwargs, **eta_learner_kwargs,
+    )
+
+    # third train w
+    w_learner = IterativeSieveLearner(
+        nuisance_model=model, gamma=gamma, use_dual_cvar=True,
+        adversarial_lambda=adversarial_lambda,
+        train_q_beta=False, train_eta=False, train_w=True, debug_beta=False,
+    )
+    w_learner_kwargs = config["w_learner_kwargs"]
+    w_learner.train(
+        dataset=train_dataset, pi_e_name=pi_e_name, verbose=False,
+        device=device, init_basis_func=env.bias_basis_func,
+        num_init_basis=1, evaluate_pv_kwargs=evaluate_pv_kwargs,
+        critic_class=critic_class, s_init=s_init,
+        critic_kwargs=critic_kwargs, **w_learner_kwargs,
+    )
 
     model_path_base = config["base_model_path"]
     model_name = "model"
     model_name += f"_lambda={adversarial_lambda}"
-    model_name += f"_sequantial={sequential}"
-    model_name += f"_dual-cvar={dual_cvar}"
     model_name += f"_rep={rep_i}"
     model_path = os.path.join(model_path_base, model_name)
     model.save_model(model_path)
@@ -161,33 +164,22 @@ def single_run(config, rep_i, restart_i,
     )
     dr_pv = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
-        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=False,
-    )
-    dr_pv_dual = model.estimate_policy_val_dr(
-        s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
         adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True,
-        hard_dual_threshold=False,
     )
     dr_pv_norm = model.estimate_policy_val_dr(
         s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
-        adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=False,
-        normalize=True,
-    )
-    dr_pv_dual_norm = model.estimate_policy_val_dr(
-        s_init=s_init, a_init=a_init, pi_e_name=pi_e_name, dl=dl_test,
         adversarial_lambda=adversarial_lambda, gamma=gamma, dual_cvar=True,
-        hard_dual_threshold=False, normalize=True,
+        normalize=True,
     )
     pv_results = {
         "q": q_pv, "w": w_pv, "w_norm": w_pv_norm,
-        "dr": dr_pv_dual, "dr_primal": dr_pv,
-        "dr_norm": dr_pv_dual_norm, "dr_primal_norm": dr_pv_norm,
+        "dr": dr_pv, "dr_norm": dr_pv_norm, 
     }
     results = []
     for key, val in pv_results.items():
         row = {
-            "rep_i": rep_i, "restart_i": restart_i, "dual_cvar": dual_cvar,
-            "sequential": sequential, "lambda": adversarial_lambda,
+            "rep_i": rep_i, "restart_i": restart_i, 
+            "lambda": adversarial_lambda,
             "est_policy_value": val, "estimator": key,
         }
         results.append(row)
@@ -197,9 +189,10 @@ def single_run(config, rep_i, restart_i,
 if __name__ == "__main__":
     with open("experiment_config.json") as f:
         config = json.load(f)
-    config["learner_kwargs"]["total_num_iterations"] = 0
-    config["learner_kwargs"]["model_max_epoch_final"] = 2
-    config["num_rep"] = 2
+    for prefix in ("q", "eta", "w"):
+        config[f"{prefix}_learner_kwargs"]["total_num_iterations"] = 0
+        config[f"{prefix}_learner_kwargs"]["model_max_epoch_final"] = 2
+    config["num_rep_range"] = [0,1]
     config["adversarial_lambda_values"] = [1, 4]
     config["num_workers"] = 8
     main(config, "experiment_results.csv")
