@@ -13,7 +13,9 @@ We study the evaluation of a policy under best- and worst-case perturbations to 
 
 ## Data
 
-The experiment runs on synthetic data, which is generated via the `build_datasets.py` script. See execution details below.
+The main experiments run only on synthetic data, which is generated via the `build_datasets.py` script. See execution details below.
+
+The additional sepsis investigation uses a blackbox sepsis management simulator that was trained using electronic health record data from the MIMIC-III dataset (Johnson et al. (2016)). See setup instructions below for details on how to obtain, and our paper for biliographical details.
 
 ## Code
 
