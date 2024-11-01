@@ -24,6 +24,6 @@ def main(config):
 
 
 if __name__ == "__main__":
-    with open("experiment_config.json") as f:
+    with open("configs/experiment_config.json") as f:
         config = json.load(f)
     main(config)

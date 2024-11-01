@@ -10,6 +10,7 @@ class AbstractLearner(ABC):
                  train_q_beta=False, train_eta=True, train_w=False,
                  worst_case=True, use_dual_cvar=True):
         self.model = nuisance_model
+        self.prev_model = None
         self.gamma = gamma
         self.adversarial_lambda = adversarial_lambda
         self.worst_case = worst_case
@@ -19,6 +20,10 @@ class AbstractLearner(ABC):
         self.use_dual_cvar = use_dual_cvar
         assert isinstance(self.model, AbstractNuisanceModel)
         super().__init__()
+
+    def update_prev_model(self):
+        self.prev_model = self.model.get_copy()
+        self.prev_model.eval()
 
     def get_num_moments(self):
         # return 2 * self.train_q_beta + 1 * self.train_eta + 1 * self.train_w
@@ -43,6 +48,45 @@ class AbstractLearner(ABC):
         # multiply by 1 - self.gamma so loss is on gamma-invariant scale
         return (1 - self.gamma) * loss.mean()
         # return 100.0 * loss.mean()
+
+    def get_batch_q_target(self, s, a, ss, r, pi_ss, use_prev_model=False):
+        if use_prev_model:
+            model = self.prev_model
+        else:
+            model = self.model
+        v, beta = model.get_v_beta(s, a, ss, pi_ss)
+
+        lmbda = self.adversarial_lambda
+        inv_lmbda = lmbda ** -1
+        assert inv_lmbda > 0
+        assert inv_lmbda <= 1
+        if self.use_dual_cvar:
+            if self.worst_case:
+                cvar_v = beta - (1 + lmbda) * F.relu(beta - v)
+            else:
+                cvar_v = beta + (1 + lmbda) * F.relu(v - beta)
+        else:
+            if self.worst_case:
+                cvar_v = (1 + lmbda) * (beta > v) * v
+            else:
+                cvar_v = (1 + lmbda) * (v > beta) * v
+        e_cvar_v = inv_lmbda * v + (1 - inv_lmbda) * cvar_v
+        return r.unsqueeze(-1) + self.gamma * e_cvar_v
+
+    def get_batch_q_loss(self, batch, pi_e_name, detach_target=True):
+        s = batch["s"]
+        a = batch["a"]
+        ss = batch["ss"]
+        r = batch["r"]
+        pi_ss = batch[f"pi_ss::{pi_e_name}"]
+
+        q = self.model.get_q(s, a)
+        q_target = self.get_batch_q_target(s, a, ss, r, pi_ss,
+                                           use_prev_model=True)
+        if detach_target:
+            q_target = q_target.detach()
+        q_err = (1 - self.gamma) * (q - q_target)
+        return (q_err ** 2).mean()
 
     def get_critic_basis_expansion(self, batch, critic):
         basis_list = []
@@ -145,24 +189,10 @@ class AbstractLearner(ABC):
                             model_grad=False, critic_grad=False,
                             basis_expansion=False):
 
-        q, v, beta = self.model.get_q_v_beta(s, a, ss, pi_ss)
-        lmbda = self.adversarial_lambda
-        inv_lmbda = lmbda ** -1
-        assert inv_lmbda > 0
-        assert inv_lmbda <= 1
-        if self.use_dual_cvar:
-            if self.worst_case:
-                cvar_v = beta - (1 + lmbda) * F.relu(beta - v)
-            else:
-                cvar_v = beta + (1 + lmbda) * F.relu(v - beta)
-        else:
-            if self.worst_case:
-                cvar_v = (1 + lmbda) * (beta > v) * v
-            else:
-                cvar_v = (1 + lmbda) * (v > beta) * v
-        e_cvar_v = inv_lmbda * v + (1 - inv_lmbda) * cvar_v
-        rho_q = q  - r.unsqueeze(-1) - self.gamma * e_cvar_v
-        rho_q = rho_q * (1 - self.gamma)
+
+        q = self.model.get_q(s, a)
+        q_target = self.get_batch_q_target(s, a, ss, r, pi_ss)
+        rho_q = (1 - self.gamma) * (q - q_target)
         if not model_grad:
             rho_q = rho_q.detach()
 

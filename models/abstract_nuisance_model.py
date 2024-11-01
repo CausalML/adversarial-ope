@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod, abstractstaticmethod
 import os
 import json
+from copy import deepcopy
 
 import torch
 import torch.nn as nn
@@ -9,14 +10,20 @@ import torch.nn.functional as F
 
 MODEL_STATE_FILE_NAME = "model_state.pt"
 BETA_STATE_FILE_NAME = "beta_state.pt"
+
 KWARGS_FILE_NAME = "init_kwargs.json"
 
 
 class AbstractNuisanceModel(ABC):
-    def __init__(self, s_dim, num_a):
+    def __init__(self, s_dim, num_a, device=None):
         super().__init__()
         self.s_dim = s_dim
         self.num_a = num_a
+        self.device = device
+
+    @abstractmethod
+    def to(self, device):
+        pass
 
     @abstractmethod
     def get_q(self, s, a):
@@ -101,6 +108,15 @@ class AbstractNuisanceModel(ABC):
         init_kwargs_path = os.path.join(save_dir, KWARGS_FILE_NAME)
         with open(init_kwargs_path, "w") as f:
             json.dump(init_kwargs, f, indent=2)
+
+    def get_copy(self):
+        model_state, beta_state = self.get_state()
+        init_kwargs_copy = deepcopy(self.get_init_kwargs())
+        model_copy = self.__class__(**init_kwargs_copy)
+        state_copy = deepcopy(model_state), deepcopy(beta_state)
+        model_copy.set_state(state_copy)
+        model_copy.to(self.device)
+        return model_copy
 
     def estimate_policy_val_q(self, s_init, a_init, gamma):
         q = self.get_q(s_init.unsqueeze(0), a_init)

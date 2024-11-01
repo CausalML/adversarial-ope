@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def evaluate_policy(env, policy, gamma, min_prec=1e-3, max_num_rollout=1e9):
+def evaluate_policy(env, policy, gamma, min_prec=1e-3, min_num_rollout=1, max_num_rollout=1e9, verbose=False):
     r_list = []
     num_rollout = 1000
     s, _ = env.reset()
@@ -17,8 +17,13 @@ def evaluate_policy(env, policy, gamma, min_prec=1e-3, max_num_rollout=1e9):
             else:
                 s = s_next
         r_std = np.std(r_list)
-        # print(len(r_list), np.mean(r_list), r_std)
-        if r_std / (len(r_list) ** 0.5) <= min_prec or len(r_list) > max_num_rollout:
+        if verbose:
+            r_mean = np.mean(r_list)
+            conf_95_err = 1.96 * r_std / (len(r_list) ** 0.5)
+            print(f'{len(r_list)} rollouts, mean reward = {r_mean} +/- {conf_95_err}')
+        if len(r_list) >= min_num_rollout and r_std / (len(r_list) ** 0.5) <= min_prec:
+            break
+        elif len(r_list) > max_num_rollout:
             break
         else:
             num_rollout = len(r_list)

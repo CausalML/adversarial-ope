@@ -8,8 +8,11 @@ import numpy as np
 
 from learners.abstract_learner import AbstractLearner
 from models.abstract_critic import AbstractCritic
-from utils.oadam import OAdam
 
+
+CLIP_VAL = 9999.0
+def make_finite(x):
+    return torch.nan_to_num(torch.clip(x, -CLIP_VAL, CLIP_VAL))
 
 class SieveCritic(AbstractCritic):
     def __init__(self, prev_net_list, net_class, net_kwargs, init_basis_func,
@@ -193,6 +196,8 @@ class IterativeSieveLearner(AbstractLearner):
 
         # now do iterative updates with weighted objective
         for iter_i in range(1, total_num_iterations+1):
+            if verbose:
+                print(f"starting iteration {iter_i}")
 
             # do a training update on model
             self.update_model(
@@ -244,24 +249,24 @@ class IterativeSieveLearner(AbstractLearner):
         self.model.set_state(best_state)
 
     def print_policy_value_estimates(self, s_init, a_init, pi_e_name, dl_test):
-        xi_sum = 0
-        batch_sum = 0
-        for batch in dl_test:
-            s = batch["s"]
-            a = batch["a"]
-            ss = batch["ss"]
-            pi_ss = batch[f"pi_ss::{pi_e_name}"]
-            v, beta = self.model.get_v_beta(s, a, ss, pi_ss)
-            # print(v[:10])
-            # print(beta[:10])
-            mean, std = (beta - v).mean(), (beta - v).std()
-            # print(mean, std)
-            xi = (beta > v) * 1.0
-            xi_sum += float(xi.sum()) / 1000.0
-            # print(xi.mean())
-            batch_sum += len(s) / 1000.0
-            # print(f"mean beta: {beta.mean()}, diff: {mean}, std: {std}, p: {xi.mean()}")
-        print(f"mean xi: {xi_sum / batch_sum}")
+        # xi_sum = 0
+        # batch_sum = 0
+        # for batch in dl_test:
+        #     s = batch["s"]
+        #     a = batch["a"]
+        #     ss = batch["ss"]
+        #     pi_ss = batch[f"pi_ss::{pi_e_name}"]
+        #     v, beta = self.model.get_v_beta(s, a, ss, pi_ss)
+        #     # print(v[:10])
+        #     # print(beta[:10])
+        #     mean, std = (beta - v).mean(), (beta - v).std()
+        #     # print(mean, std)
+        #     xi = (beta > v) * 1.0
+        #     xi_sum += float(xi.sum()) / 1000.0
+        #     # print(xi.mean())
+        #     batch_sum += len(s) / 1000.0
+        #     # print(f"mean beta: {beta.mean()}, diff: {mean}, std: {std}, p: {xi.mean()}")
+        # print(f"mean xi: {xi_sum / batch_sum}")
 
         q_pv = self.model.estimate_policy_val_q(
             s_init=s_init, a_init=a_init, gamma=self.gamma
@@ -350,7 +355,12 @@ class IterativeSieveLearner(AbstractLearner):
         )
         num_param = self.get_num_moments() * critic.get_num_basis_func()
         omega_inv_np = omega_inv.reshape(num_param, num_param).cpu().double().numpy()
-        eig_vals, eig_vecs = np.linalg.eigh(omega_inv_np)
+        try:
+            eig_vals, eig_vecs = np.linalg.eigh(omega_inv_np)
+        except:
+            eig_vals, eig_vecs = np.linalg.eig(omega_inv_np)
+            eig_vals = eig_vals.real
+            eig_vecs = eig_vecs.real
         idx = [i_ for i_, v_ in enumerate(eig_vals) if v_ > eig_threshold]
         sig_inv = torch.FloatTensor(eig_vals[idx]).to(omega_inv.device) ** -1
         omega = sig_inv * eig_threshold - 1.0
@@ -572,12 +582,14 @@ class IterativeSieveLearner(AbstractLearner):
             f_basis = self.get_critic_basis_expansion(
                 batch=batch, critic=critic
             )
-            moments_expended = self.get_batch_moments(
+            f_basis = make_finite(f_basis)
+            moments_expanded = self.get_batch_moments(
                 batch=batch, critic=critic, s_init=s_init,
                 pi_e_name=pi_e_name, basis_expansion=True,
             )
-            mat_1 = torch.einsum("bkn,blm->knlm", moments_expended,
-                                 moments_expended)
+            moments_expanded = make_finite(moments_expanded)
+            mat_1 = torch.einsum("bkn,blm->knlm", moments_expanded,
+                                 moments_expanded)
             mat_2 = torch.einsum("bkn,blm,nm->knlm",
                                  f_basis, f_basis, gamma_mat)
             f_mat = f_mat + (mat_1 + mat_2) / batch_scale

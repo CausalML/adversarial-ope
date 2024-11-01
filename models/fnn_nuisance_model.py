@@ -6,6 +6,7 @@ import torch.nn as nn
 from models.abstract_nuisance_model import AbstractNuisanceModel
 from utils.neural_nets import FFNet
 
+
 class FFNBetaModule(nn.Module):
     def __init__(self, s_dim, num_a, gamma, config, device=None):
         super().__init__()
@@ -58,7 +59,6 @@ class FFNuisanceModule(nn.Module):
                 calc_v=False, calc_eta=False, calc_w=False):
 
         if calc_q:
-            # q = self.scale * torch.sigmoid(self.q_net(sa_features) / 10.0) 
             assert a is not None
             q_all = self.pos_head(self.q_net(s))
             q = q_all.gather(dim=-1, index=a.unsqueeze(-1))
@@ -90,22 +90,25 @@ class FeedForwardNuisanceModel(AbstractNuisanceModel):
         super().__init__(s_dim, num_a)
         self.gamma = gamma
         self.config = config
+        self.device = device
+        self.reset_networks()
+
+    def reset_networks(self):
         self.net = FFNuisanceModule(
-            s_dim=s_dim, num_a=num_a, config=config,
-            gamma=gamma, device=device
+            s_dim=self.s_dim, num_a=self.num_a, config=self.config,
+            gamma=self.gamma, device=self.device,
         )
         self.beta_net = FFNBetaModule(
-            s_dim=s_dim, num_a=num_a, config=config,
-            gamma=gamma, device=device,
-        )
-        self.device = device
-        if device is not None:
-            self.net.to(device)
-            self.beta_net.to(device)
+            s_dim=self.s_dim, num_a=self.num_a, config=self.config,
+            gamma=self.gamma, device=self.device,
+        )   
+        if self.device is not None:
+            self.net.to(self.device)
+            self.beta_net.to(self.device)
         self.net.eval()
         self.beta_net.eval()
 
-    def to(self, device=None):
+    def to(self, device):
         if device is not None:
             self.net.to(device)
             self.beta_net.to(device)

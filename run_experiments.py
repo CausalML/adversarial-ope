@@ -4,6 +4,7 @@ import os
 import pandas
 from tqdm import tqdm
 from itertools import product
+import argparse
 
 from environments.toy_env import ToyEnv
 from utils.policy_evaluation import evaluate_policy
@@ -13,12 +14,14 @@ from utils.offline_dataset import OfflineRLDataset
 from models.fnn_nuisance_model import FeedForwardNuisanceModel
 from models.fnn_critic import FeedForwardCritic
 from learners.iterative_sieve_critic import IterativeSieveLearner
+from learners.robust_fqi_learner import RobustFQILearner
 
 
-def main(config, results_path):
+def main(config):
+    results_path = config["results_path"]
     num_rep_range = config["num_rep_range"]
-    lambda_range = config["adversarial_lambda_values"]
     num_restart_range = config["num_restart_range"]
+    lambda_range = config["adversarial_lambda_values"]
     job_queue = Queue()
     num_jobs = 0
     job_iter = product(num_rep_range, num_restart_range, lambda_range)
@@ -31,7 +34,10 @@ def main(config, results_path):
 
     procs = []
     results_queue = Queue()
-    devices = config["devices"]
+    if "devices" in config:
+        devices = config["devices"]
+    else:
+        devices = [None]
     for i in range(config["num_workers"]):
         device = devices[i % len(devices)]
         p_args = (job_queue, results_queue, config, device)
@@ -81,8 +87,8 @@ def single_run(config, rep_i, restart_i, adversarial_lambda, device=None):
 
     base_dataset_path_train = config["base_dataset_path_train"]
     base_dataset_path_test = config["base_dataset_path_test"]
-    dataset_path_train = "_".join([base_dataset_path_train, str(rep_i+1)])
-    dataset_path_test = "_".join([base_dataset_path_test, str(rep_i+1)])
+    dataset_path_train = "_".join([base_dataset_path_train, str(rep_i)])
+    dataset_path_test = "_".join([base_dataset_path_test, str(rep_i)])
     train_dataset = OfflineRLDataset.load_dataset(dataset_path_train)
     test_dataset = OfflineRLDataset.load_dataset(dataset_path_test)
     if device is not None:
@@ -90,10 +96,9 @@ def single_run(config, rep_i, restart_i, adversarial_lambda, device=None):
         test_dataset.to(device)
 
     # first train q/beta
-    q_learner = IterativeSieveLearner(
+    q_learner = RobustFQILearner(
         nuisance_model=model, gamma=gamma, use_dual_cvar=True,
         adversarial_lambda=adversarial_lambda,
-        train_q_beta=True, train_eta=False, train_w=False, debug_beta=False,
     )
     s_init, a_init = env.get_s_a_init(pi_e)
     if device is not None:
@@ -108,10 +113,8 @@ def single_run(config, rep_i, restart_i, adversarial_lambda, device=None):
     q_learner_kwargs = config["q_learner_kwargs"]
     q_learner.train(
         dataset=train_dataset, pi_e_name=pi_e_name, verbose=False,
-        device=device, init_basis_func=env.bias_basis_func,
-        num_init_basis=1, evaluate_pv_kwargs=evaluate_pv_kwargs,
-        critic_class=critic_class, s_init=s_init,
-        critic_kwargs=critic_kwargs, **q_learner_kwargs,
+        device=device, evaluate_pv_kwargs=evaluate_pv_kwargs,
+        **q_learner_kwargs,
     )
 
     # second train eta
@@ -187,18 +190,9 @@ def single_run(config, rep_i, restart_i, adversarial_lambda, device=None):
 
 
 if __name__ == "__main__":
-    with open("experiment_config.json") as f:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="configs/experiment_config.json")
+    args = parser.parse_args()
+    with open(args.config) as f:
         config = json.load(f)
-    for prefix in ("q", "eta", "w"):
-        config[f"{prefix}_learner_kwargs"]["total_num_iterations"] = 0
-        config[f"{prefix}_learner_kwargs"]["model_max_epoch_final"] = 2
-    config["num_rep_range"] = [0,1]
-    config["adversarial_lambda_values"] = [1, 4]
-    config["num_workers"] = 8
-    main(config, "experiment_results.csv")
-
-    # results = single_run(config=config, rep_i=0, adversarial_lambda=4,
-    #                      dual_cvar=True, sequential=False, device=None)
-    # for row in results:
-    #     print(row)
-    #     print()
+    main(config=config)

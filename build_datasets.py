@@ -9,13 +9,13 @@ from utils.offline_dataset import OfflineRLDataset
 def main(config_path="experiment_config.json"):
     with open(config_path) as f:
         config = json.load(f)
-    num_rep = config["num_rep"]
+    num_rep_range = config["num_rep_range"]
     s_threshold = config["s_threshold"]
     num_sample = config["num_sample"]
     pi_b_threshold = config["pi_b_threshold"]
     pi_b_epsilon = config["pi_b_epsilon"]
 
-    for i in range(num_rep):
+    for i in num_rep_range:
         print(f"building datasets for rep {i}")
 
         env = ToyEnv(s_init=s_threshold, adversarial=False)
